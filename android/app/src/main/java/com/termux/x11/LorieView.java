@@ -600,25 +600,19 @@ public class LorieView extends SurfaceView implements InputStub {
     private final SurfaceHolder.Callback mSurfaceCallback = new SurfaceHolder.Callback() {
         @Override public void surfaceCreated(@NonNull SurfaceHolder holder) {
             holder.setFormat(PixelFormat.BGRA_8888);
+            // Request the display's maximum refresh rate immediately when the
+            // surface is first created so the Android compositor switches to
+            // a high-refresh mode before we start sending frames.
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && holder.getSurface() != null && holder.getSurface().isValid()) {
+                applyMaxFrameRate(holder.getSurface());
+            }
             Log.i("LorieView", "surfaceCreated called!");
         }
 
         @Override public void surfaceChanged(@NonNull SurfaceHolder holder, int f, int width, int height) {
             Log.i("LorieView", "surfaceChanged called with width=" + width + ", height=" + height);
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && holder.getSurface() != null && holder.getSurface().isValid()) {
-                try {
-                    float targetRate = getDisplay() != null ? getDisplay().getRefreshRate() : 60f;
-                    if (getDisplay() != null) {
-                        for (Display.Mode mode : getDisplay().getSupportedModes()) {
-                            if (mode.getRefreshRate() > targetRate) {
-                                targetRate = mode.getRefreshRate();
-                            }
-                        }
-                    }
-                    if (targetRate < 60f) targetRate = 60f;
-                    holder.getSurface().setFrameRate(targetRate, Surface.FRAME_RATE_COMPATIBILITY_DEFAULT);
-                    Log.i("LorieView", "Configured Surface frame rate: " + targetRate + " Hz");
-                } catch (Throwable ignored) {}
+                applyMaxFrameRate(holder.getSurface());
             }
             LorieView.this.surfaceChanged(mNativeContext, holder.getSurface());
             width = getMeasuredWidth();
@@ -632,6 +626,28 @@ public class LorieView extends SurfaceView implements InputStub {
             LorieView.this.surfaceChanged(mNativeContext, null);
         }
     };
+
+    /** Apply the maximum supported refresh rate to the given surface. */
+    @android.annotation.SuppressLint("NewApi")
+    private void applyMaxFrameRate(Surface surface) {
+        try {
+            float targetRate = getDisplay() != null ? getDisplay().getRefreshRate() : 60f;
+            if (getDisplay() != null) {
+                for (Display.Mode mode : getDisplay().getSupportedModes()) {
+                    if (mode.getRefreshRate() > targetRate) {
+                        targetRate = mode.getRefreshRate();
+                    }
+                }
+            }
+            if (targetRate < 60f) targetRate = 60f;
+            // FRAME_RATE_COMPATIBILITY_FIXED_SOURCE signals that this surface
+            // produces its own fixed-rate stream so Android's frame pacing
+            // does not insert duplicate frames on high-refresh displays.
+            surface.setFrameRate(targetRate, Surface.FRAME_RATE_COMPATIBILITY_FIXED_SOURCE);
+            Log.i("LorieView", "Configured Surface frame rate: " + targetRate + " Hz (FIXED_SOURCE)");
+        } catch (Throwable ignored) {}
+    }
+
 
     public LorieView(Context context) { super(context); init(); }
     public LorieView(Context context, AttributeSet attrs) { super(context, attrs); init(); }
@@ -654,6 +670,10 @@ public class LorieView extends SurfaceView implements InputStub {
 
         setFocusable(true);
         setFocusableInTouchMode(true);
+
+        // Use a hardware-accelerated layer so the SurfaceView can be
+        // composited by the GPU rather than falling back to software blending.
+        setLayerType(LAYER_TYPE_HARDWARE, null);
 
         setBackground(new ColorDrawable(Color.TRANSPARENT) {
             public boolean isStateful() {

@@ -56,6 +56,7 @@ class RootfsManager(private val context: Context) {
     private val downloadDir: File get() = File(baseDir, "downloads")
     private val configFile: File get() = File(baseDir, "distro.conf")
     private val setupCompleteFile: File get() = File(baseDir, "SETUP_COMPLETE")
+    private val rootShell = RootShell(context)
 
     fun getInstalledDistro(): String =
         if (configFile.exists()) configFile.readText().trim()
@@ -64,8 +65,35 @@ class RootfsManager(private val context: Context) {
     fun getRootfsPath(): String = rootfsDir.absolutePath
 
     fun isRootfsReady(): Boolean =
-        rootfsDir.exists() && File(rootfsDir, "bin").exists() &&
+        rootfsDir.exists() &&
+        (File(rootfsDir, "bin").exists() || File(rootfsDir, "usr/bin").exists() || File(rootfsDir, "bin/sh").exists()) &&
         File(rootfsDir, "usr").exists() && File(rootfsDir, "etc").exists()
+
+    /**
+     * Unmount all mounts located under rootfsDir before any wipe or extraction.
+     * Prevents deleteRecursively from traversing bind-mounts (e.g. host filesDir)
+     * and deleting downloaded tarballs or host files.
+     */
+    fun unmountAllMountsUnderRootfs() {
+        if (!rootShell.hasRoot()) return
+        try {
+            val rootPath = rootfsDir.absolutePath
+            val mounts = rootShell.exec("cat /proc/mounts").lines()
+            val targets = mounts.mapNotNull { line ->
+                val parts = line.split("\\s+".toRegex())
+                if (parts.size >= 2) parts[1] else null
+            }.filter { it.startsWith(rootPath) || it.contains("com.nativOS/files/rootfs") }
+             .distinct()
+             .sortedByDescending { it.length }
+
+            for (target in targets) {
+                rootShell.exec("umount -l $target 2>/dev/null || true")
+                Log.i(TAG, "Unmounted: $target")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to unmount mounts before extraction: ${e.message}")
+        }
+    }
 
     fun isSetupComplete(): Boolean = setupCompleteFile.exists()
 
@@ -352,33 +380,67 @@ class RootfsManager(private val context: Context) {
     fun extractRootfs(onProgress: (progress: Double, status: String) -> Unit) {
         try {
             val distro = getInstalledDistro().ifEmpty { DEFAULT_DISTRO }
-            val tarball = File(downloadDir, "$distro-rootfs.tar.gz").takeIf { it.exists() }
-                ?: File(downloadDir, "$distro-rootfs.tar.xz").takeIf { it.exists() }
-                ?: downloadDir.listFiles()?.firstOrNull { it.name.startsWith(distro) && (it.name.endsWith(".tar.gz") || it.name.endsWith(".tar.xz")) }
-            if (tarball == null || !tarball.exists()) {
-                onProgress(-1.0, "Rootfs tarball not found.")
+            var tarball = File(downloadDir, "$distro-rootfs.tar.gz").takeIf { it.exists() && it.length() > 0 }
+                ?: File(downloadDir, "$distro-rootfs.tar.xz").takeIf { it.exists() && it.length() > 0 }
+                ?: downloadDir.listFiles()?.firstOrNull { it.name.startsWith(distro) && (it.name.endsWith(".tar.gz") || it.name.endsWith(".tar.xz")) && it.length() > 0 }
+
+            if (tarball == null || !tarball.exists() || tarball.length() == 0L) {
+                Log.w(TAG, "Rootfs tarball not found or empty, attempting download...")
+                onProgress(0.0, "Downloading $distro filesystem...")
+                downloadRootfs(distro, onProgress)
+                tarball = File(downloadDir, "$distro-rootfs.tar.gz").takeIf { it.exists() && it.length() > 0 }
+                    ?: File(downloadDir, "$distro-rootfs.tar.xz").takeIf { it.exists() && it.length() > 0 }
+                    ?: downloadDir.listFiles()?.firstOrNull { it.name.startsWith(distro) && (it.name.endsWith(".tar.gz") || it.name.endsWith(".tar.xz")) && it.length() > 0 }
+            }
+
+            if (tarball == null || !tarball.exists() || tarball.length() == 0L) {
+                onProgress(-1.0, "Rootfs tarball not found after download.")
                 return
             }
-            if (rootfsDir.exists()) rootfsDir.deleteRecursively()
+
+            // CRITICAL: Unmount all active mounts under rootfsDir before wiping or extracting.
+            // Otherwise deleteRecursively traverses bind mounts (like filesDir -> rootfs/data/user/0/...)
+            // and deletes the downloaded tarball or host files!
+            unmountAllMountsUnderRootfs()
+
+            if (rootfsDir.exists()) {
+                if (rootShell.hasRoot()) {
+                    rootShell.exec("rm -rf ${rootfsDir.absolutePath}")
+                } else {
+                    rootfsDir.deleteRecursively()
+                }
+            }
             rootfsDir.mkdirs()
 
             onProgress(0.1, "Extracting Linux filesystem...")
             Log.i(TAG, "Extracting rootfs from ${tarball.absolutePath}")
 
-            val process = ProcessBuilder("tar", "-xf", tarball.absolutePath, "-C", rootfsDir.absolutePath)
-                .redirectErrorStream(true).start()
-            val reader = process.inputStream.bufferedReader()
-            var line: String?
-            var lineCount = 0
+            var exitCode = -1
             var lastLine = ""
-            while (reader.readLine().also { line = it } != null) {
-                lastLine = line!!
-                lineCount++
-                if (lineCount % 500 == 0) onProgress(0.1 + (lineCount % 5000) / 10000.0, "Extracting files...")
+            if (rootShell.hasRoot()) {
+                var lineCount = 0
+                exitCode = rootShell.exec("tar -xf ${tarball.absolutePath} -C ${rootfsDir.absolutePath}") { chunk ->
+                    lastLine = chunk.trim()
+                    lineCount++
+                    if (lineCount % 10 == 0) onProgress(0.1 + (lineCount % 500) / 1000.0, "Extracting files...")
+                }
+            } else {
+                val process = ProcessBuilder("tar", "-xf", tarball.absolutePath, "-C", rootfsDir.absolutePath)
+                    .redirectErrorStream(true).start()
+                val reader = process.inputStream.bufferedReader()
+                var line: String?
+                var lineCount = 0
+                while (reader.readLine().also { line = it } != null) {
+                    lastLine = line!!
+                    lineCount++
+                    if (lineCount % 500 == 0) onProgress(0.1 + (lineCount % 5000) / 10000.0, "Extracting files...")
+                }
+                exitCode = process.waitFor()
             }
-            val exitCode = process.waitFor()
+
             val binDir = File(rootfsDir, "bin")
-            if (exitCode != 0 && (!binDir.exists() || binDir.list()?.isEmpty() == true))
+            val usrBinDir = File(rootfsDir, "usr/bin")
+            if (exitCode != 0 && (!binDir.exists() || binDir.list()?.isEmpty() == true) && (!usrBinDir.exists() || usrBinDir.list()?.isEmpty() == true))
                 throw RuntimeException("tar failed (code $exitCode): $lastLine")
 
             onProgress(0.7, "Configuring Linux environment...")

@@ -55,7 +55,16 @@ class ChrootManager(private val context: Context) {
         File(rootfsDir, "usr/bin/phoc").exists() ||
         File(rootfsDir, "usr/libexec/phosh").exists()
 
-    fun isRunning(): Boolean = sessionProcess?.isAlive == true
+    fun isRunning(): Boolean {
+        if (sessionProcess?.isAlive == true) return true
+        val deCheck = "pgrep -x phosh >/dev/null 2>&1 || pgrep -x phoc >/dev/null 2>&1 || " +
+            "pgrep -x plasmashell >/dev/null 2>&1 || pgrep -x kwin_wayland >/dev/null 2>&1 || " +
+            "pgrep -x sway >/dev/null 2>&1 || pgrep -x xfce4-session >/dev/null 2>&1 || " +
+            "pgrep -x gnome-shell >/dev/null 2>&1 || pgrep -x lxqt-session >/dev/null 2>&1 || " +
+            "pgrep -x mate-session >/dev/null 2>&1"
+        val socketCheck = "test -S /tmp/runtime-root/wayland-0 || test -S /tmp/.X11-unix/X0"
+        return execChroot("($socketCheck) || ($deCheck)") == 0
+    }
 
     fun getRootfsPath(): String = rootfsDir.absolutePath
 
@@ -180,14 +189,28 @@ class ChrootManager(private val context: Context) {
         Log.i(TAG, "All mounts ready")
     }
 
-    /** Bind-mount the host X11 socket directory into the chroot. */
+    /** Bind-mount the host X11 socket directory into the chroot so that
+     *  phoc (running with WLR_BACKENDS=x11) can connect to the Termux X11
+     *  server at DISPLAY=:0.  Also bind-mounts /tmp/runtime-root so that
+     *  Wayland-based tooling can see any host Wayland socket. */
     fun bindX11Socket() {
         if (!hasRoot()) return
         val chrootX11 = File(rootfsDir, "tmp/.X11-unix").absolutePath
+        val hostX11 = "/tmp/.X11-unix"
 
         val mounts = rootShell.exec("mount").lines()
+
+        // Unmount any stale X11 bind if it points somewhere different.
         if (mounts.any { it.contains(" on $chrootX11 ") }) {
-            rootShell.exec("umount $chrootX11")
+            rootShell.exec("umount $chrootX11 2>/dev/null || true")
+        }
+
+        // Create the target directory inside the chroot and bind-mount.
+        rootShell.exec(
+            "mkdir -p $chrootX11 && chmod 1777 $chrootX11 && " +
+            "mount --bind $hostX11 $chrootX11"
+        ).also {
+            Log.i(TAG, "X11 socket bind-mounted: $hostX11 → $chrootX11")
         }
     }
 
@@ -1293,19 +1316,66 @@ class ChrootManager(private val context: Context) {
         }.start()
     }
 
-    /** Wait until both the display socket and desktop session process exist. */
-    fun awaitDesktopReady(timeoutMs: Long = 20_000): Boolean {
+    /**
+     * Wait until the desktop session process is running and responsive.
+     *
+     * Detection strategy (in order):
+     *  1. Wayland socket visible inside chroot + DE process running (ideal path)
+     *  2. X11 socket visible inside chroot + DE process running (X11-nested path)
+     *  3. DE process running alone — socket may not be visible from chroot view
+     *     because the X11 server lives in the Android side; treat as ready after
+     *     an extra stabilisation delay.
+     *
+     * The [sessionProcess] alive-check is lenient: the outer `su -c chroot` wrapper
+     * may exit once the inner daemon detaches, so we allow up to [maxDeadReads]
+     * consecutive dead-process observations before declaring failure.
+     */
+    fun awaitDesktopReady(timeoutMs: Long = 60_000): Boolean {
         val deadline = System.currentTimeMillis() + timeoutMs
-        val deCheck = "(pgrep -x phosh || pgrep -x phoc || pgrep -x plasmashell || pgrep -x kwin_wayland || pgrep -x sway || pgrep -x xfce4-session || pgrep -x gnome-shell || pgrep -x lxqt-session || pgrep -x mate-session)"
+        val minWaitDeadline = System.currentTimeMillis() + 15_000L
+        val deCheck = "pgrep -x phosh >/dev/null 2>&1 || " +
+            "pgrep -x phoc >/dev/null 2>&1 || " +
+            "pgrep -x plasmashell >/dev/null 2>&1 || " +
+            "pgrep -x kwin_wayland >/dev/null 2>&1 || " +
+            "pgrep -x sway >/dev/null 2>&1 || " +
+            "pgrep -x xfce4-session >/dev/null 2>&1 || " +
+            "pgrep -x gnome-shell >/dev/null 2>&1 || " +
+            "pgrep -x lxqt-session >/dev/null 2>&1 || " +
+            "pgrep -x mate-session >/dev/null 2>&1"
+        val socketCheck = "test -S /tmp/runtime-root/wayland-0 || test -S /tmp/.X11-unix/X0"
+
         while (System.currentTimeMillis() < deadline) {
-            if (sessionProcess?.isAlive != true) return false
-            if (execChroot("(test -S /tmp/runtime-root/wayland-0 || test -S /tmp/.X11-unix/X0) && ($deCheck >/dev/null 2>&1)") == 0) {
-                Log.i(TAG, "Desktop readiness check passed")
+            // 1. Full check: socket + DE process
+            if (execChroot("($socketCheck) && ($deCheck)") == 0) {
+                Log.i(TAG, "Desktop readiness check passed (socket + process)")
                 Thread.sleep(500)
                 return true
             }
+
+            // 2. Fallback: DE process is running
+            if (execChroot(deCheck) == 0) {
+                Log.i(TAG, "Desktop process running — checking socket briefly")
+                for (i in 1..10) {
+                    Thread.sleep(300)
+                    if (execChroot(socketCheck) == 0) {
+                        Log.i(TAG, "Desktop socket appeared")
+                        return true
+                    }
+                }
+                Log.i(TAG, "Desktop process active (stabilised)")
+                return true
+            }
+
+            // 3. If wrapper exited, only give up if past the grace period and no desktop process exists
+            if (sessionProcess?.isAlive == false && System.currentTimeMillis() > minWaitDeadline) {
+                if (execChroot(deCheck) != 0) {
+                    Log.e(TAG, "Session process terminated and no desktop process is running")
+                    return false
+                }
+            }
+
             try {
-                Thread.sleep(250)
+                Thread.sleep(400)
             } catch (_: InterruptedException) {
                 Thread.currentThread().interrupt()
                 return false
@@ -1376,29 +1446,26 @@ class ChrootManager(private val context: Context) {
     /** Unmount all NativOS-related mounts. */
     fun unmountAll() {
         if (!hasRoot()) return
-        val mounts = rootShell.exec("mount").lines()
-        val targets = listOf(
-            File(rootfsDir, "mnt/android").absolutePath,
-            File(rootfsDir, "run/nativOS").absolutePath,
-            File(rootfsDir, "tmp/.X11-unix").absolutePath,
-            File(rootfsDir, "dev/pts").absolutePath,
-            File(rootfsDir, "dev/shm").absolutePath,
-            File(rootfsDir, "dev").absolutePath,
-            File(rootfsDir, "proc").absolutePath,
-            File(rootfsDir, "sys").absolutePath,
-            File(rootfsDir, "run").absolutePath,
-            File(rootfsDir, "tmp").absolutePath,
-            rootfsDir.absolutePath
-        )
-        targets.forEach { target ->
-            if (mounts.any { it.contains(" on $target ") }) {
+        try {
+            val rootPath = rootfsDir.absolutePath
+            val mounts = rootShell.exec("cat /proc/mounts").lines()
+            val targets = mounts.mapNotNull { line ->
+                val parts = line.split("\\s+".toRegex())
+                if (parts.size >= 2) parts[1] else null
+            }.filter { it.startsWith(rootPath) || it.contains("com.nativOS/files/rootfs") }
+             .distinct()
+             .sortedByDescending { it.length }
+
+            targets.forEach { target ->
                 try {
-                    rootShell.exec("umount -l $target 2>/dev/null || umount $target 2>/dev/null || true")
+                    rootShell.exec("umount -l $target 2>/dev/null || true")
                     Log.i(TAG, "Unmounted $target")
                 } catch (e: Exception) {
                     Log.w(TAG, "Failed to unmount $target: ${e.message}")
                 }
             }
+        } catch (e: Exception) {
+            Log.w(TAG, "Error in unmountAll: ${e.message}")
         }
     }
 

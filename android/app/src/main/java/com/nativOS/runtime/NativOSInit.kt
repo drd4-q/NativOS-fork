@@ -167,7 +167,8 @@ stage_desktop() {
     export LANG=C.UTF-8
     export LC_ALL=C.UTF-8
     export GTK_A11Y=none
-    export GSK_RENDERER=cairo
+    export GSK_RENDERER=gl
+    export GDK_RENDERING=vulkan
 
     if [ "${'$'}GPU_MODE" = "turnip" ]; then
         log_info "Enabling Turnip/Zink acceleration"
@@ -179,9 +180,15 @@ stage_desktop() {
         export MESA_LOADER_DRIVER_OVERRIDE=zink
         export TU_DEBUG=noconform
         export ZINK_DESCRIPTORS=lazy
-        export MESA_VK_WSI_DEBUG=sw
-        TURNIP_ICD=${'$'}(find /opt/nativOS-gpu /usr/share/vulkan/icd.d -name "*freedreno*.json" 2>/dev/null | head -n 1)
+        # Find the native musl-compiled ICD first, then fall back to bundled package
+        TURNIP_ICD=${'$'}(for p in /usr/lib/libvulkan_freedreno.so /usr/share/vulkan/icd.d/freedreno_icd.aarch64.json; do
+            [ -e "${'$'}p" ] && echo /usr/share/vulkan/icd.d/freedreno_icd.aarch64.json && break
+        done)
+        [ -z "${'$'}TURNIP_ICD" ] && TURNIP_ICD=${'$'}(find /opt/nativos-gpu /usr/share/vulkan/icd.d -name "*freedreno*.json" 2>/dev/null | head -n 1)
         [ -n "${'$'}TURNIP_ICD" ] && export VK_ICD_FILENAMES="${'$'}TURNIP_ICD"
+        # Use GL renderer for GTK4 (Vulkan WSI not available in X11 nested)
+        export GSK_RENDERER=gl
+        unset GDK_RENDERING
     elif [ "${'$'}GPU_MODE" = "virgl" ]; then
         log_info "Enabling VirGL acceleration"
         export NATIVOS_GPU=virgl
@@ -216,6 +223,19 @@ stage_desktop() {
     export WLR_DRM_DEVICES=""
     export TMPDIR="${'$'}HOST_TMPDIR"
 
+    # SDL and Qt apps use X11 since phoc runs as nested X11 compositor.
+    # Do NOT set GDK_BACKEND=x11 globally — phosh needs GDK_BACKEND=wayland
+    # to connect to the phoc Wayland compositor via its -E session script.
+    export SDL_VIDEODRIVER=x11
+    export QT_QPA_PLATFORM=xcb
+
+    # HiDPI cursor scaling — DISPLAY_SCALE may be a float (e.g. 1.5) so we
+    # cannot use $(()) which only handles integers in POSIX sh.
+    _cursor_sz=${'$'}(awk "BEGIN{printf \"%d\", int(24 * ${'$'}DISPLAY_SCALE)}" 2>/dev/null || echo 24) || true
+    if [ -z "${'$'}_cursor_sz" ] || [ "${'$'}_cursor_sz" -lt 8 ] 2>/dev/null; then _cursor_sz=24; fi
+    export XCURSOR_SIZE=${'$'}{_cursor_sz:-24}
+    export XCURSOR_THEME=default
+
     PRELOAD=""
     for lib in /usr/local/lib/libsocket_hook.so /usr/local/lib/libnativos-close-range.so /usr/local/lib/libnodri3.so /usr/local/lib/libandroid-shmem.so; do
         if [ -f "${'$'}lib" ] && env -i LD_PRELOAD="${'$'}lib" /bin/sh -c 'exit 0' 2>/dev/null; then
@@ -235,11 +255,16 @@ stage_desktop() {
     export LD_PRELOAD="${'$'}PRELOAD"
     export NATIVOS_APP_LD_PRELOAD="${'$'}APP_PRELOAD"
 
+    # Performance tuning
     export MESA_VK_WSI_PRESENT_MODE=mailbox
     export TU_DEBUG=noconform
     export vblank_mode=0
     export WLR_NO_HARDWARE_CURSORS=1
     export LP_NUM_THREADS=${'$'}(nproc 2>/dev/null || echo 4)
+    # Request performance CPU governor if possible
+    for gov in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
+        echo performance > "${'$'}gov" 2>/dev/null || true
+    done
 
     cat > /etc/nativOS/phoc.ini << PHOCEOF
 [core]
@@ -248,7 +273,6 @@ xwayland=false
 [output:X11-1]
 mode=${'$'}{SCREEN_WIDTH}x${'$'}{SCREEN_HEIGHT}
 scale=${'$'}DISPLAY_SCALE
-max_render_time=1
 PHOCEOF
 
     log_ok "Display: ${'$'}{SCREEN_WIDTH}x${'$'}{SCREEN_HEIGHT} @ scale ${'$'}{DISPLAY_SCALE}"
@@ -310,12 +334,26 @@ PHOCEOF
             if command -v kgx >/dev/null 2>&1; then exec kgx; else sleep 3600; exit 1; fi
         fi
 
-        LAUNCH_CMD="phoc -C /etc/nativOS/phoc.ini -E \"sh -c '
-            export LD_PRELOAD=\\\"\\${'$'}NATIVOS_APP_LD_PRELOAD\\\"
-            [ -x \\\"${'$'}XDG_PORTAL_GTK\\\" ] && \\\"${'$'}XDG_PORTAL_GTK\\\" >\\\"${'$'}LOG_DIR/portal-gtk.log\\\" 2>&1 &
-            [ -x \\\"${'$'}XDG_PORTAL\\\" ] && \\\"${'$'}XDG_PORTAL\\\" >\\\"${'$'}LOG_DIR/portal.log\\\" 2>&1 &
-            exec \\\"${'$'}PHOSH_EXEC\\\" -U
-        '\""
+        # Write a wrapper script to avoid escape-hell inside -E that caused
+        # "bad variable name" and phosh failing to get WAYLAND_DISPLAY.
+        PHOSH_WRAPPER="/tmp/nativOS-phosh-session.sh"
+        cat > "${'$'}PHOSH_WRAPPER" << 'WRAPPER_EOF'
+#!/bin/sh
+export WAYLAND_DISPLAY="${'$'}{WAYLAND_DISPLAY:-wayland-0}"
+export XDG_RUNTIME_DIR="${'$'}{XDG_RUNTIME_DIR:-/tmp/runtime-root}"
+export GDK_BACKEND=wayland
+WRAPPER_EOF
+        # Append runtime-expanded values (variables known at script-write time)
+        cat >> "${'$'}PHOSH_WRAPPER" << WRAPPER_EOF2
+export DBUS_SESSION_BUS_ADDRESS="${'$'}DBUS_SESSION_BUS_ADDRESS"
+export LD_PRELOAD="${'$'}NATIVOS_APP_LD_PRELOAD"
+[ -x "${'$'}XDG_PORTAL_GTK" ] && "${'$'}XDG_PORTAL_GTK" > "${'$'}LOG_DIR/portal-gtk.log" 2>&1 &
+[ -x "${'$'}XDG_PORTAL" ] && "${'$'}XDG_PORTAL" > "${'$'}LOG_DIR/portal.log" 2>&1 &
+exec "${'$'}PHOSH_EXEC" -U
+WRAPPER_EOF2
+        chmod +x "${'$'}PHOSH_WRAPPER"
+
+        LAUNCH_CMD="phoc -C /etc/nativOS/phoc.ini -E ${'$'}PHOSH_WRAPPER"
     fi
 
     echo ${'$'}${'$'} > "${'$'}RUN_DIR/desktop.pid"
