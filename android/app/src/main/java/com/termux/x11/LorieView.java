@@ -605,6 +605,21 @@ public class LorieView extends SurfaceView implements InputStub {
 
         @Override public void surfaceChanged(@NonNull SurfaceHolder holder, int f, int width, int height) {
             Log.i("LorieView", "surfaceChanged called with width=" + width + ", height=" + height);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && holder.getSurface() != null && holder.getSurface().isValid()) {
+                try {
+                    float targetRate = getDisplay() != null ? getDisplay().getRefreshRate() : 60f;
+                    if (getDisplay() != null) {
+                        for (Display.Mode mode : getDisplay().getSupportedModes()) {
+                            if (mode.getRefreshRate() > targetRate) {
+                                targetRate = mode.getRefreshRate();
+                            }
+                        }
+                    }
+                    if (targetRate < 60f) targetRate = 60f;
+                    holder.getSurface().setFrameRate(targetRate, Surface.FRAME_RATE_COMPATIBILITY_DEFAULT);
+                    Log.i("LorieView", "Configured Surface frame rate: " + targetRate + " Hz");
+                } catch (Throwable ignored) {}
+            }
             LorieView.this.surfaceChanged(mNativeContext, holder.getSurface());
             width = getMeasuredWidth();
             height = getMeasuredHeight();
@@ -727,7 +742,15 @@ public class LorieView extends SurfaceView implements InputStub {
 
     private void sendWindowChange() {
         String name;
-        int framerate = (int) (getDisplay() != null ? getDisplay().getRefreshRate() : 30);
+        int framerate = (int) (getDisplay() != null ? getDisplay().getRefreshRate() : 60);
+        if (getDisplay() != null) {
+            for (Display.Mode mode : getDisplay().getSupportedModes()) {
+                if (mode.getRefreshRate() > framerate) {
+                    framerate = (int) mode.getRefreshRate();
+                }
+            }
+        }
+        if (framerate < 60) framerate = 60;
 
         if (getDisplay() == null || getDisplay().getDisplayId() == Display.DEFAULT_DISPLAY)
             name = "builtin";

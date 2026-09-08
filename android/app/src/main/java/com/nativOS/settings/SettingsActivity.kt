@@ -1,23 +1,41 @@
 package com.nativOS.settings
 
 import android.app.Activity
+import android.app.AlertDialog
 import android.content.Intent
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.provider.Settings
+import android.util.Log
 import android.view.Gravity
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import android.widget.Toast
 import com.google.android.material.switchmaterial.SwitchMaterial
 import com.nativOS.bridge.AndroidAppIntegration
 import com.nativOS.launcher.KioskActivity
+import com.nativOS.runtime.ChrootManager
+import com.nativOS.runtime.DisplayController
+import com.nativOS.runtime.GpuDetector
+import com.nativOS.runtime.RootfsManager
+import com.nativOS.setup.SetupWizardActivity
+import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 class SettingsActivity : Activity() {
     private lateinit var summary: TextView
     private lateinit var desktopCheck: TextView
     private lateinit var homeCheck: TextView
     private lateinit var deGoogleStatus: TextView
+    private lateinit var alpineCheck: TextView
+    private lateinit var debianCheck: TextView
+    private lateinit var displayScaleSubtitle: TextView
+    private lateinit var gpuDriverSubtitle: TextView
+    private lateinit var desktopEnvSubtitle: TextView
+    private lateinit var touchModeSubtitle: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -72,6 +90,41 @@ class SettingsActivity : Activity() {
         }, PremiumUi.matchWidth())
 
         content.addView(PremiumUi.verticalSpace(this, 26))
+        content.addView(PremiumUi.sectionLabel(this, "Linux distribution"))
+        content.addView(group().apply {
+            alpineCheck = PremiumUi.text(this@SettingsActivity, "", 20f, PremiumUi.primary)
+            addView(row(
+                title = "Alpine Linux 3.21 (postmarketOS)",
+                subtitle = "Recommended · Lightweight mobile stack · OpenRC · fast",
+                trailing = alpineCheck
+            ) {
+                NativOSPreferences.setPreferredDistro(this@SettingsActivity, "alpine")
+                updateState()
+            })
+            addView(PremiumUi.separator(this@SettingsActivity))
+            debianCheck = PremiumUi.text(this@SettingsActivity, "", 20f, PremiumUi.primary)
+            addView(row(
+                title = "Debian 13 (Trixie)",
+                subtitle = "Next-gen Debian · glibc · broad package compatibility",
+                trailing = debianCheck
+            ) {
+                NativOSPreferences.setPreferredDistro(this@SettingsActivity, "debian")
+                updateState()
+            })
+        }, PremiumUi.matchWidth())
+
+        content.addView(PremiumUi.verticalSpace(this, 26))
+        content.addView(PremiumUi.sectionLabel(this, "Окружение рабочего стола"))
+        content.addView(group().apply {
+            desktopEnvSubtitle = PremiumUi.text(this@SettingsActivity, "", 13f, PremiumUi.muted)
+            addView(row(
+                title = "Графическая оболочка (postmarketOS)",
+                subtitleView = desktopEnvSubtitle,
+                trailingText = "›"
+            ) { showDesktopEnvironmentDialog() })
+        }, PremiumUi.matchWidth())
+
+        content.addView(PremiumUi.verticalSpace(this, 26))
         content.addView(PremiumUi.sectionLabel(this, "Privacy"))
         content.addView(group().apply {
             deGoogleStatus = PremiumUi.text(this@SettingsActivity, "Not scanned", 13f, PremiumUi.muted)
@@ -116,6 +169,73 @@ class SettingsActivity : Activity() {
             addView(PremiumUi.separator(this@SettingsActivity))
             addView(row("Android settings", "Open the underlying system settings", trailingText = "›") {
                 startActivity(Intent(Settings.ACTION_SETTINGS))
+            })
+        }, PremiumUi.matchWidth())
+
+        content.addView(PremiumUi.verticalSpace(this, 26))
+        content.addView(PremiumUi.sectionLabel(this, "Дисплей и плавность"))
+        content.addView(group().apply {
+            val maxHz = DisplayController.getMaxSupportedRefreshRate(this@SettingsActivity)
+            addView(switchRow(
+                "Высокая частота обновления (${maxHz.toInt()} Гц)",
+                "Максимальная плавность отображения Phosh",
+                NativOSPreferences.highRefreshRate(this@SettingsActivity)
+            ) { checked ->
+                NativOSPreferences.setHighRefreshRate(this@SettingsActivity, checked)
+                DisplayController.applyRefreshRate(this@SettingsActivity)
+            })
+            addView(PremiumUi.separator(this@SettingsActivity))
+            displayScaleSubtitle = PremiumUi.text(this@SettingsActivity, "", 13f, PremiumUi.muted)
+            addView(row(
+                title = "Масштаб интерфейса (DPI)",
+                subtitleView = displayScaleSubtitle,
+                trailingText = "›"
+            ) { showScaleDialog() })
+            addView(PremiumUi.separator(this@SettingsActivity))
+            touchModeSubtitle = PremiumUi.text(this@SettingsActivity, "", 13f, PremiumUi.muted)
+            addView(row(
+                title = "Режим сенсора (частота опроса)",
+                subtitleView = touchModeSubtitle,
+                trailingText = "›"
+            ) { showTouchModeDialog() })
+        }, PremiumUi.matchWidth())
+
+        content.addView(PremiumUi.verticalSpace(this, 26))
+        content.addView(PremiumUi.sectionLabel(this, "Графический ускоритель"))
+        content.addView(group().apply {
+            gpuDriverSubtitle = PremiumUi.text(this@SettingsActivity, "", 13f, PremiumUi.muted)
+            addView(row(
+                title = "Режим GPU и видеодрайвер",
+                subtitleView = gpuDriverSubtitle,
+                trailingText = "›"
+            ) { showGpuDialog() })
+        }, PremiumUi.matchWidth())
+
+        content.addView(PremiumUi.verticalSpace(this, 26))
+        content.addView(PremiumUi.sectionLabel(this, "Снимки и резервные копии"))
+        content.addView(group().apply {
+            addView(row(
+                title = "Создать снимок системы",
+                subtitle = "Сохранить полный бэкап в Download/nativOS-backups",
+                trailingText = "Создать"
+            ) { startBackup() })
+            addView(PremiumUi.separator(this@SettingsActivity))
+            addView(row(
+                title = "Восстановить систему из снимка",
+                subtitle = "Откатить Linux-окружение к сохраненному состоянию",
+                trailingText = "›"
+            ) { showRestoreDialog() })
+        }, PremiumUi.matchWidth())
+
+        content.addView(PremiumUi.verticalSpace(this, 26))
+        content.addView(PremiumUi.sectionLabel(this, "Мастер настройки"))
+        content.addView(group().apply {
+            addView(row(
+                title = "Мастер первоначальной настройки",
+                subtitle = "Повторно пройти пошаговую настройку NativOS",
+                trailingText = "›"
+            ) {
+                startActivity(Intent(this@SettingsActivity, SetupWizardActivity::class.java))
             })
         }, PremiumUi.matchWidth())
 
@@ -250,6 +370,255 @@ class SettingsActivity : Activity() {
                 "Home launcher selected · Android approval needed"
             else -> "Linux desktop with Android underneath"
         }
+        val distro = NativOSPreferences.preferredDistro(this)
+        if (::alpineCheck.isInitialized) alpineCheck.text = if (distro == "alpine") "✓" else ""
+        if (::debianCheck.isInitialized) debianCheck.text = if (distro == "debian") "✓" else ""
+
+        val scale = NativOSPreferences.displayScale(this)
+        if (::displayScaleSubtitle.isInitialized) {
+            displayScaleSubtitle.text = if (scale == 0f) "Автоматически (по DPI экрана)" else "${(scale * 100).toInt()}%"
+        }
+        val gpu = NativOSPreferences.gpuDriver(this)
+        if (::gpuDriverSubtitle.isInitialized) {
+            val detected = GpuDetector.detect(this)
+            gpuDriverSubtitle.text = if (gpu == "auto") "Авто: ${detected.modelName} (${detected.recommendedDriver})" else "Принудительно: $gpu"
+        }
+
+        val currentDe = NativOSPreferences.desktopEnvironment(this)
+        if (::desktopEnvSubtitle.isInitialized) {
+            val deInfo = RootfsManager.SUPPORTED_DESKTOPS.find { it.id == currentDe }
+            val deName = deInfo?.name ?: currentDe
+            val rootfsManager = RootfsManager(this)
+            val installed = rootfsManager.isDesktopInstalled(currentDe)
+            desktopEnvSubtitle.text = "$deName · ${if (installed) "Установлено" else "Требуется установка"}"
+        }
+
+        val touch = NativOSPreferences.touchMode(this)
+        if (::touchModeSubtitle.isInitialized) {
+            touchModeSubtitle.text = when (touch) {
+                "touch" -> "Прямой Multi-Touch (120-240 Гц, без задержек)"
+                "simulated" -> "Эмуляция мыши (со стрелкой)"
+                "trackpad" -> "Режим трекпада"
+                else -> touch
+            }
+        }
+    }
+
+    private fun showScaleDialog() {
+        val options = arrayOf("Автоматически", "125%", "150%", "175%", "200%", "250%")
+        val values = floatArrayOf(0f, 1.25f, 1.5f, 1.75f, 2.0f, 2.5f)
+        val current = NativOSPreferences.displayScale(this)
+        val selectedIdx = values.indexOfFirst { kotlin.math.abs(it - current) < 0.01f }.coerceAtLeast(0)
+
+        AlertDialog.Builder(this)
+            .setTitle("Масштаб интерфейса (DPI)")
+            .setSingleChoiceItems(options, selectedIdx) { dialog, which ->
+                NativOSPreferences.setDisplayScale(this, values[which])
+                updateState()
+                dialog.dismiss()
+            }
+            .setNegativeButton("Отмена", null)
+            .show()
+    }
+
+    private fun showGpuDialog() {
+        val options = arrayOf("Автоопределение (Рекомендуется)", "Qualcomm Turnip (Vulkan)", "VirGL (Host OpenGL)", "Zink (Vulkan to GL)", "Software (LLVMpipe)")
+        val values = arrayOf("auto", "turnip", "virgl", "zink", "software")
+        val current = NativOSPreferences.gpuDriver(this)
+        val selectedIdx = values.indexOf(current).coerceAtLeast(0)
+
+        AlertDialog.Builder(this)
+            .setTitle("Выбор видеодрайвера")
+            .setSingleChoiceItems(options, selectedIdx) { dialog, which ->
+                NativOSPreferences.setGpuDriver(this, values[which])
+                updateState()
+                dialog.dismiss()
+            }
+            .setNegativeButton("Отмена", null)
+            .show()
+    }
+
+    private fun showDesktopEnvironmentDialog() {
+        val rootfsManager = RootfsManager(this)
+        val chrootManager = ChrootManager(this)
+        val current = NativOSPreferences.desktopEnvironment(this)
+
+        val items = RootfsManager.SUPPORTED_DESKTOPS.map { de ->
+            val isInstalled = rootfsManager.isDesktopInstalled(de.id)
+            val status = if (isInstalled) "✓ Установлено" else "Требуется загрузка"
+            val active = if (de.id == current) " [АКТИВНО]" else ""
+            "${de.name}$active\n$status · ${de.category}"
+        }.toTypedArray()
+
+        val selectedIdx = RootfsManager.SUPPORTED_DESKTOPS.indexOfFirst { it.id == current }.coerceAtLeast(0)
+
+        AlertDialog.Builder(this)
+            .setTitle("Выбор окружения рабочего стола")
+            .setSingleChoiceItems(items, selectedIdx) { dialog, which ->
+                dialog.dismiss()
+                val targetDe = RootfsManager.SUPPORTED_DESKTOPS[which]
+                if (targetDe.id == current) return@setSingleChoiceItems
+
+                val isInstalled = rootfsManager.isDesktopInstalled(targetDe.id)
+                if (isInstalled) {
+                    NativOSPreferences.setDesktopEnvironment(this, targetDe.id)
+                    updateState()
+                    AlertDialog.Builder(this)
+                        .setTitle("Окружение переключено")
+                        .setMessage("Выбрана оболочка ${targetDe.name}. Перезапустить сессию Linux сейчас?")
+                        .setPositiveButton("Перезапустить") { _, _ ->
+                            Thread({
+                                chrootManager.stopSession()
+                                runOnUiThread {
+                                    startActivity(Intent(this, KioskActivity::class.java).apply {
+                                        addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                                    })
+                                    finish()
+                                }
+                            }, "nativOS-restart-session").start()
+                        }
+                        .setNegativeButton("Позже", null)
+                        .show()
+                } else {
+                    AlertDialog.Builder(this)
+                        .setTitle("Установка ${targetDe.name}")
+                        .setMessage("Окружение ${targetDe.name} еще не установлено. Загрузить и установить необходимые пакеты сейчас?")
+                        .setPositiveButton("Установить") { _, _ ->
+                            installAndSwitchDesktop(targetDe)
+                        }
+                        .setNegativeButton("Отмена", null)
+                        .show()
+                }
+            }
+            .setNegativeButton("Отмена", null)
+            .show()
+    }
+
+    private fun installAndSwitchDesktop(de: RootfsManager.Companion.DesktopEnvironmentInfo) {
+        val rootfsManager = RootfsManager(this)
+        val chrootManager = ChrootManager(this)
+        val progressDialog = android.app.ProgressDialog(this).apply {
+            setTitle("Установка ${de.name}")
+            setMessage("Подготовка пакетов...")
+            setCancelable(false)
+            show()
+        }
+
+        Thread({
+            val ok = rootfsManager.installDesktopEnvironment(chrootManager, de.id) { progress, status ->
+                runOnUiThread { progressDialog.setMessage(status) }
+            }
+            runOnUiThread {
+                progressDialog.dismiss()
+                if (ok) {
+                    NativOSPreferences.setDesktopEnvironment(this, de.id)
+                    updateState()
+                    AlertDialog.Builder(this)
+                        .setTitle("Установка завершена")
+                        .setMessage("${de.name} успешно установлена! Перезапустить сессию сейчас?")
+                        .setPositiveButton("Перезапустить") { _, _ ->
+                            Thread({
+                                chrootManager.stopSession()
+                                runOnUiThread {
+                                    startActivity(Intent(this, KioskActivity::class.java).apply {
+                                        addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                                    })
+                                    finish()
+                                }
+                            }, "nativOS-restart-session").start()
+                        }
+                        .setNegativeButton("Позже", null)
+                        .show()
+                } else {
+                    Toast.makeText(this, "Ошибка при установке ${de.name}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }, "nativOS-install-de").start()
+    }
+
+    private fun showTouchModeDialog() {
+        val options = arrayOf(
+            "⚡ Прямой Multi-Touch (120-240 Гц, минимальная задержка)",
+            "🖱️ Эмуляция курсора мыши (со стрелкой)",
+            "📱 Режим трекпада (относительное перемещение)"
+        )
+        val values = arrayOf("touch", "simulated", "trackpad")
+        val current = NativOSPreferences.touchMode(this)
+        val selectedIdx = values.indexOf(current).coerceAtLeast(0)
+
+        AlertDialog.Builder(this)
+            .setTitle("Режим сенсора (частота опроса)")
+            .setSingleChoiceItems(options, selectedIdx) { dialog, which ->
+                NativOSPreferences.setTouchMode(this, values[which])
+                updateState()
+                dialog.dismiss()
+                Toast.makeText(this, "Режим сенсора: ${options[which]}", Toast.LENGTH_SHORT).show()
+            }
+            .setNegativeButton("Отмена", null)
+            .show()
+    }
+
+    private fun startBackup() {
+        val rootfsManager = RootfsManager(this)
+        val timestamp = SimpleDateFormat("yyyyMMdd-HHmm", Locale.US).format(Date())
+        val targetDir = File("/sdcard/Download/nativOS-backups")
+        val targetFile = File(targetDir, "nativos-backup-$timestamp.tar.gz")
+
+        Toast.makeText(this, "Создание снимка системы...", Toast.LENGTH_SHORT).show()
+        Thread({
+            val success = rootfsManager.createBackup(targetFile) { progress, status ->
+                Log.d("Settings", "Backup: $status ($progress)")
+            }
+            runOnUiThread {
+                if (success) {
+                    Toast.makeText(this, "Резервная копия сохранена в Download/nativOS-backups", Toast.LENGTH_LONG).show()
+                } else {
+                    Toast.makeText(this, "Ошибка создания копии", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }, "nativOS-backup").start()
+    }
+
+    private fun showRestoreDialog() {
+        val rootfsManager = RootfsManager(this)
+        val backups = rootfsManager.listBackups()
+        if (backups.isEmpty()) {
+            Toast.makeText(this, "Снимки не найдены в папке Download", Toast.LENGTH_LONG).show()
+            return
+        }
+
+        val names = backups.map { "${it.name} (${it.length() / (1024 * 1024)} МБ)" }.toTypedArray()
+        AlertDialog.Builder(this)
+            .setTitle("Выберите снимок для восстановления")
+            .setItems(names) { _, which ->
+                val chosen = backups[which]
+                AlertDialog.Builder(this)
+                    .setTitle("Подтверждение отката")
+                    .setMessage("Текущее состояние системы будет заменено снимком ${chosen.name}. Продолжить?")
+                    .setPositiveButton("Восстановить") { _, _ ->
+                        performRestore(chosen)
+                    }
+                    .setNegativeButton("Отмена", null)
+                    .show()
+            }
+            .setNegativeButton("Отмена", null)
+            .show()
+    }
+
+    private fun performRestore(file: File) {
+        val rootfsManager = RootfsManager(this)
+        val chrootManager = ChrootManager(this)
+        Toast.makeText(this, "Восстановление снимка...", Toast.LENGTH_SHORT).show()
+        Thread({
+            val ok = rootfsManager.restoreBackup(file, chrootManager) { _, _ -> }
+            runOnUiThread {
+                if (ok) {
+                    Toast.makeText(this, "Система успешно восстановлена!", Toast.LENGTH_LONG).show()
+                } else {
+                    Toast.makeText(this, "Ошибка восстановления", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }, "nativOS-restore").start()
     }
 
     private fun selectableBackground() = android.util.TypedValue().let { value ->

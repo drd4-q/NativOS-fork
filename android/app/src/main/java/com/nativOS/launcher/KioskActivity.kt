@@ -31,7 +31,9 @@ import android.widget.TextView
 import com.nativOS.bridge.AndroidAppIntegration
 import com.nativOS.bridge.BridgeService
 import com.nativOS.runtime.ChrootManager
+import com.nativOS.runtime.DisplayController
 import com.nativOS.runtime.RootfsManager
+import com.nativOS.setup.SetupWizardActivity
 import com.nativOS.storage.SharedFolderSync
 import com.nativOS.settings.NativOSPreferences
 import com.nativOS.settings.SettingsActivity
@@ -377,8 +379,16 @@ class KioskActivity : Activity() {
         chrootManager = ChrootManager(this)
         rootfsManager = RootfsManager(this)
 
+        DisplayController.applyRefreshRate(this)
         requestNotificationPermission()
         startBridgeService()
+
+        if (!rootfsManager.isSetupComplete() && !NativOSPreferences.isSetupWizardCompleted(this)) {
+            startActivity(Intent(this, SetupWizardActivity::class.java))
+            finish()
+            return
+        }
+
         startBootSequence()
     }
 
@@ -701,8 +711,13 @@ class KioskActivity : Activity() {
                     // Even if Phosh failed, leave the rootfs package database usable.
                     updateOverlay(0.90, "Installing minimal session...", "Phosh failed, trying fallback")
                     try {
-                        chrootManager.execChroot(
-                            "TMPDIR=/tmp DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends dbus dbus-x11")
+                        if (rootfsManager.isApkBased()) {
+                            chrootManager.execChroot("apk add --no-cache dbus dbus-x11")
+                        } else {
+                            chrootManager.execChroot(
+                                "TMPDIR=/tmp DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends dbus dbus-x11"
+                            )
+                        }
                     } catch (_: Exception) {}
                 }
             } else {
@@ -901,6 +916,7 @@ class KioskActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        DisplayController.applyRefreshRate(this)
         enterImmersiveMode()
         AndroidAppIntegration.sync(this)
         if (waitingForRoot) retryAfterRootGrant()
