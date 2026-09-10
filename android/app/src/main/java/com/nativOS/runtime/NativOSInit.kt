@@ -83,7 +83,8 @@ stage_sysinit() {
 
     mkdir -p "${'$'}RUN_DIR" "${'$'}LOG_DIR" /run/dbus /run/sshd /tmp/.X11-unix /etc/nativOS
     chmod 0755 "${'$'}RUN_DIR" "${'$'}LOG_DIR" /run/dbus
-    chmod -R 666 /dev/snd /dev/video* /dev/media* /dev/ion 2>/dev/null || true
+    chmod 755 /dev/snd 2>/dev/null || true
+    chmod 666 /dev/snd/* /dev/video* /dev/media* /dev/ion 2>/dev/null || true
 
     [ -e /dev/fd ] || ln -snf /proc/self/fd /dev/fd 2>/dev/null || true
     [ -e /dev/stdin ] || ln -snf /proc/self/fd/0 /dev/stdin 2>/dev/null || true

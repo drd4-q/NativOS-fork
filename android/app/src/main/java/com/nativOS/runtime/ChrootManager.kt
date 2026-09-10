@@ -161,7 +161,7 @@ class ChrootManager(private val context: Context) {
 
         // ALSA direct audio: make sound nodes accessible and configure default card
         if (NativOSPreferences.alsaDirectAudio(context)) {
-            rootShell.exec("chmod -R 666 /dev/snd 2>/dev/null || true")
+            rootShell.exec("chmod 755 /dev/snd 2>/dev/null; chmod 666 /dev/snd/* 2>/dev/null || true")
             val asoundConf = File(rootfsDir, "etc/asound.conf")
             try {
                 asoundConf.parentFile?.mkdirs()
