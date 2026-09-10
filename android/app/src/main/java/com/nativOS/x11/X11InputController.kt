@@ -17,6 +17,7 @@ class X11InputController(private val lorieView: LorieView) {
 
     init {
         applyTouchModePreference()
+        applyTouchCalibration()
         MainActivity.getInstance().setKeyHandler(inputHandler::sendKeyEvent)
 
         lorieView.setCallback { width, height, transform ->
@@ -35,6 +36,20 @@ class X11InputController(private val lorieView: LorieView) {
         }
         MainActivity.getPrefs().touchMode.put(modeInt.toString())
         inputHandler.reloadPreferences(MainActivity.getPrefs())
+    }
+
+    fun applyTouchCalibration() {
+        val context = lorieView.context
+        inputHandler.updateTouchCalibration(
+            NativOSPreferences.touchInvertX(context),
+            NativOSPreferences.touchInvertY(context),
+            NativOSPreferences.touchSwapAxes(context),
+            NativOSPreferences.touchRotationCorrection(context),
+            NativOSPreferences.touchScaleX(context),
+            NativOSPreferences.touchScaleY(context),
+            NativOSPreferences.touchOffsetX(context),
+            NativOSPreferences.touchOffsetY(context)
+        )
     }
 
     private fun handleMotionEvent(view: View, event: MotionEvent): Boolean =

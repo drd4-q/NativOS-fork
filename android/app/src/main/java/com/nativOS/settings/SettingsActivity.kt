@@ -36,6 +36,8 @@ class SettingsActivity : Activity() {
     private lateinit var gpuDriverSubtitle: TextView
     private lateinit var desktopEnvSubtitle: TextView
     private lateinit var touchModeSubtitle: TextView
+    private lateinit var storageModeSubtitle: TextView
+    private lateinit var touchRotationSubtitle: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -198,6 +200,82 @@ class SettingsActivity : Activity() {
                 subtitleView = touchModeSubtitle,
                 trailingText = "›"
             ) { showTouchModeDialog() })
+        }, PremiumUi.matchWidth())
+
+        content.addView(PremiumUi.verticalSpace(this, 26))
+        content.addView(PremiumUi.sectionLabel(this, "Калибровка сенсора (Тач)"))
+        content.addView(group().apply {
+            addView(switchRow(
+                "Инвертировать ось X",
+                "Зеркальное отражение по горизонтали",
+                NativOSPreferences.touchInvertX(this@SettingsActivity)
+            ) { checked ->
+                NativOSPreferences.setTouchInvertX(this@SettingsActivity, checked)
+            })
+            addView(PremiumUi.separator(this@SettingsActivity))
+            addView(switchRow(
+                "Инвертировать ось Y",
+                "Зеркальное отражение по вертикали",
+                NativOSPreferences.touchInvertY(this@SettingsActivity)
+            ) { checked ->
+                NativOSPreferences.setTouchInvertY(this@SettingsActivity, checked)
+            })
+            addView(PremiumUi.separator(this@SettingsActivity))
+            addView(switchRow(
+                "Поменять оси местами (Swap X/Y)",
+                "Для планшетов и устройств с перевернутым дигитайзером",
+                NativOSPreferences.touchSwapAxes(this@SettingsActivity)
+            ) { checked ->
+                NativOSPreferences.setTouchSwapAxes(this@SettingsActivity, checked)
+            })
+            addView(PremiumUi.separator(this@SettingsActivity))
+            touchRotationSubtitle = PremiumUi.text(this@SettingsActivity, "", 13f, PremiumUi.muted)
+            addView(row(
+                title = "Поворот сенсора",
+                subtitleView = touchRotationSubtitle,
+                trailingText = "›"
+            ) { showTouchRotationDialog() })
+            addView(PremiumUi.separator(this@SettingsActivity))
+            addView(row(
+                title = "Сбросить калибровку тача",
+                subtitle = "Вернуть стандартные оси и координаты",
+                trailingText = "Сброс"
+            ) {
+                NativOSPreferences.resetTouchCalibration(this@SettingsActivity)
+                updateState()
+                Toast.makeText(this@SettingsActivity, "Калибровка тача сброшена", Toast.LENGTH_SHORT).show()
+            })
+        }, PremiumUi.matchWidth())
+
+        content.addView(PremiumUi.verticalSpace(this, 26))
+        content.addView(PremiumUi.sectionLabel(this, "Производительность и ядро"))
+        content.addView(group().apply {
+            addView(switchRow(
+                "Режим максимальной производительности",
+                "Фиксация частот CPU/GPU и защита от OOM killer",
+                NativOSPreferences.performanceModeEnabled(this@SettingsActivity)
+            ) { checked ->
+                NativOSPreferences.setPerformanceModeEnabled(this@SettingsActivity, checked)
+            })
+            addView(PremiumUi.separator(this@SettingsActivity))
+            addView(switchRow(
+                "Расширение памяти Swap/ZRAM",
+                "Выделение дополнительного swap-файла под тяжелые программы",
+                NativOSPreferences.swapEnabled(this@SettingsActivity)
+            ) { checked ->
+                NativOSPreferences.setSwapEnabled(this@SettingsActivity, checked)
+            })
+        }, PremiumUi.matchWidth())
+
+        content.addView(PremiumUi.verticalSpace(this, 26))
+        content.addView(PremiumUi.sectionLabel(this, "Хранилище системы"))
+        content.addView(group().apply {
+            storageModeSubtitle = PremiumUi.text(this@SettingsActivity, "", 13f, PremiumUi.muted)
+            addView(row(
+                title = "Режим хранения rootfs",
+                subtitleView = storageModeSubtitle,
+                trailingText = "›"
+            ) { showStorageModeDialog() })
         }, PremiumUi.matchWidth())
 
         content.addView(PremiumUi.verticalSpace(this, 26))
@@ -401,6 +479,22 @@ class SettingsActivity : Activity() {
                 "trackpad" -> "Режим трекпада"
                 else -> touch
             }
+        }
+
+        if (::touchRotationSubtitle.isInitialized) {
+            val rot = NativOSPreferences.touchRotationCorrection(this)
+            touchRotationSubtitle.text = when (rot) {
+                90 -> "90° (По часовой стрелке)"
+                180 -> "180° (Вверх ногами)"
+                270 -> "270° (Против часовой стрелки)"
+                else -> "0° (Стандартно)"
+            }
+        }
+
+        if (::storageModeSubtitle.isInitialized) {
+            val mode = NativOSPreferences.storageMode(this)
+            val fs = NativOSPreferences.storageFsType(this)
+            storageModeSubtitle.text = if (mode == "image") "Образ диска .img ($fs)" else "Каталог файлов (Directory)"
         }
     }
 
@@ -619,6 +713,60 @@ class SettingsActivity : Activity() {
                 }
             }
         }, "nativOS-restore").start()
+    }
+
+    private fun showTouchRotationDialog() {
+        val options = arrayOf("0° (Стандартно)", "90° (По часовой стрелке)", "180° (Вверх ногами)", "270° (Против часовой стрелки)")
+        val values = intArrayOf(0, 90, 180, 270)
+        val current = NativOSPreferences.touchRotationCorrection(this)
+        val selectedIdx = values.indexOf(current).coerceAtLeast(0)
+
+        AlertDialog.Builder(this)
+            .setTitle("Поворот сенсора (Тач)")
+            .setSingleChoiceItems(options, selectedIdx) { dialog, which ->
+                NativOSPreferences.setTouchRotationCorrection(this, values[which])
+                updateState()
+                dialog.dismiss()
+            }
+            .setNegativeButton("Отмена", null)
+            .show()
+    }
+
+    private fun showStorageModeDialog() {
+        val options = arrayOf(
+            "Каталог файлов (Быстрый доступ, по умолчанию)",
+            "Образ диска .img (ext4, защита от удаления при очистке)",
+            "Образ диска .img (btrfs, сжатие zstd и снапшоты)"
+        )
+        val currentMode = NativOSPreferences.storageMode(this)
+        val currentFs = NativOSPreferences.storageFsType(this)
+        val selectedIdx = when {
+            currentMode == "image" && currentFs == "btrfs" -> 2
+            currentMode == "image" -> 1
+            else -> 0
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle("Режим хранения файловой системы")
+            .setSingleChoiceItems(options, selectedIdx) { dialog, which ->
+                when (which) {
+                    0 -> {
+                        NativOSPreferences.setStorageMode(this, "directory")
+                    }
+                    1 -> {
+                        NativOSPreferences.setStorageMode(this, "image")
+                        NativOSPreferences.setStorageFsType(this, "ext4")
+                    }
+                    2 -> {
+                        NativOSPreferences.setStorageMode(this, "image")
+                        NativOSPreferences.setStorageFsType(this, "btrfs")
+                    }
+                }
+                updateState()
+                dialog.dismiss()
+            }
+            .setNegativeButton("Отмена", null)
+            .show()
     }
 
     private fun selectableBackground() = android.util.TypedValue().let { value ->

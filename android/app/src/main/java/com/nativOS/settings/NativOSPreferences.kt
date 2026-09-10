@@ -135,4 +135,143 @@ object NativOSPreferences {
         context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
             .edit().putBoolean(SETUP_WIZARD_COMPLETED, completed).apply()
     }
+
+    // ── Performance & Memory ──
+    private const val PERFORMANCE_MODE = "performance_mode"
+    private const val SWAP_ENABLED = "swap_enabled"
+
+    fun performanceModeEnabled(context: Context): Boolean =
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+            .getBoolean(PERFORMANCE_MODE, true)
+
+    fun setPerformanceModeEnabled(context: Context, enabled: Boolean) {
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+            .edit().putBoolean(PERFORMANCE_MODE, enabled).apply()
+    }
+
+    fun swapEnabled(context: Context): Boolean =
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+            .getBoolean(SWAP_ENABLED, false)
+
+    fun setSwapEnabled(context: Context, enabled: Boolean) {
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+            .edit().putBoolean(SWAP_ENABLED, enabled).apply()
+    }
+
+    // ── Storage Mode (.img vs directory) ──
+    private const val STORAGE_MODE = "storage_mode"
+    private const val STORAGE_FS_TYPE = "storage_fs_type"
+
+    fun storageMode(context: Context): String =
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+            .getString(STORAGE_MODE, "directory") ?: "directory"
+
+    fun setStorageMode(context: Context, mode: String) {
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+            .edit().putString(STORAGE_MODE, mode).apply()
+    }
+
+    fun storageFsType(context: Context): String =
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+            .getString(STORAGE_FS_TYPE, "ext4") ?: "ext4"
+
+    fun setStorageFsType(context: Context, fsType: String) {
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+            .edit().putString(STORAGE_FS_TYPE, fsType).apply()
+    }
+
+    // ── Touch Calibration & Transformation ──
+    private const val TOUCH_INVERT_X = "touch_invert_x"
+    private const val TOUCH_INVERT_Y = "touch_invert_y"
+    private const val TOUCH_SWAP_AXES = "touch_swap_axes"
+    private const val TOUCH_ROTATION = "touch_rotation"
+    private const val TOUCH_SCALE_X = "touch_scale_x"
+    private const val TOUCH_SCALE_Y = "touch_scale_y"
+    private const val TOUCH_OFFSET_X = "touch_offset_x"
+    private const val TOUCH_OFFSET_Y = "touch_offset_y"
+
+    fun touchInvertX(context: Context): Boolean =
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+            .getBoolean(TOUCH_INVERT_X, false)
+
+    fun setTouchInvertX(context: Context, invert: Boolean) {
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+            .edit().putBoolean(TOUCH_INVERT_X, invert).apply()
+    }
+
+    fun touchInvertY(context: Context): Boolean =
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+            .getBoolean(TOUCH_INVERT_Y, false)
+
+    fun setTouchInvertY(context: Context, invert: Boolean) {
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+            .edit().putBoolean(TOUCH_INVERT_Y, invert).apply()
+    }
+
+    fun touchSwapAxes(context: Context): Boolean =
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+            .getBoolean(TOUCH_SWAP_AXES, false)
+
+    fun setTouchSwapAxes(context: Context, swap: Boolean) {
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+            .edit().putBoolean(TOUCH_SWAP_AXES, swap).apply()
+    }
+
+    fun touchRotationCorrection(context: Context): Int =
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+            .getInt(TOUCH_ROTATION, 0)
+
+    fun setTouchRotationCorrection(context: Context, degrees: Int) {
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+            .edit().putInt(TOUCH_ROTATION, degrees).apply()
+    }
+
+    fun touchScaleX(context: Context): Float =
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+            .getFloat(TOUCH_SCALE_X, 1.0f)
+
+    fun setTouchScaleX(context: Context, scale: Float) {
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+            .edit().putFloat(TOUCH_SCALE_X, scale).apply()
+    }
+
+    fun touchScaleY(context: Context): Float =
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+            .getFloat(TOUCH_SCALE_Y, 1.0f)
+
+    fun setTouchScaleY(context: Context, scale: Float) {
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+            .edit().putFloat(TOUCH_SCALE_Y, scale).apply()
+    }
+
+    fun touchOffsetX(context: Context): Float =
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+            .getFloat(TOUCH_OFFSET_X, 0.0f)
+
+    fun setTouchOffsetX(context: Context, offset: Float) {
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+            .edit().putFloat(TOUCH_OFFSET_X, offset).apply()
+    }
+
+    fun touchOffsetY(context: Context): Float =
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+            .getFloat(TOUCH_OFFSET_Y, 0.0f)
+
+    fun setTouchOffsetY(context: Context, offset: Float) {
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+            .edit().putFloat(TOUCH_OFFSET_Y, offset).apply()
+    }
+
+    fun resetTouchCalibration(context: Context) {
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit()
+            .putBoolean(TOUCH_INVERT_X, false)
+            .putBoolean(TOUCH_INVERT_Y, false)
+            .putBoolean(TOUCH_SWAP_AXES, false)
+            .putInt(TOUCH_ROTATION, 0)
+            .putFloat(TOUCH_SCALE_X, 1.0f)
+            .putFloat(TOUCH_SCALE_Y, 1.0f)
+            .putFloat(TOUCH_OFFSET_X, 0.0f)
+            .putFloat(TOUCH_OFFSET_Y, 0.0f)
+            .apply()
+    }
 }

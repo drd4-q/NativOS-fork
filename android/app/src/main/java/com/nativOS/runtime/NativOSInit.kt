@@ -37,6 +37,8 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
+DISPLAY_TRANSFORM="${'$'}{DISPLAY_TRANSFORM:-normal}"
+
 log_info() { echo -e "${'$'}{BLUE}[nativOS-init]${'$'}{NC} ${'$'}1"; }
 log_ok() { echo -e "${'$'}{GREEN}[nativOS-init:OK]${'$'}{NC} ${'$'}1"; }
 log_warn() { echo -e "${'$'}{YELLOW}[nativOS-init:WARN]${'$'}{NC} ${'$'}1"; }
@@ -52,6 +54,7 @@ parse_start_args() {
             --app-uid) APP_UID="${'$'}2"; shift 2 ;;
             --desktop) DESKTOP_ENV="${'$'}2"; shift 2 ;;
             --tmpdir) HOST_TMPDIR="${'$'}2"; shift 2 ;;
+            --transform) DISPLAY_TRANSFORM="${'$'}2"; shift 2 ;;
             *) shift ;;
         esac
     done
@@ -59,6 +62,15 @@ parse_start_args() {
 
 stage_sysinit() {
     log_info "Stage 1: Sysinit & runtime directories..."
+    # OOM killer protection for supervisor
+    echo -1000 > /proc/$$/oom_score_adj 2>/dev/null || true
+
+    # Tune kernel memory parameters for high performance
+    echo 100 > /proc/sys/vm/swappiness 2>/dev/null || true
+    echo 50 > /proc/sys/vm/vfs_cache_pressure 2>/dev/null || true
+    echo 10 > /proc/sys/vm/dirty_ratio 2>/dev/null || true
+    echo 5 > /proc/sys/vm/dirty_background_ratio 2>/dev/null || true
+
     mkdir -p /tmp/runtime-root
     chown root:root /tmp/runtime-root 2>/dev/null || true
     chmod 0700 /tmp/runtime-root
@@ -273,9 +285,10 @@ xwayland=false
 [output:X11-1]
 mode=${'$'}{SCREEN_WIDTH}x${'$'}{SCREEN_HEIGHT}
 scale=${'$'}DISPLAY_SCALE
+transform=${'$'}{DISPLAY_TRANSFORM:-normal}
 PHOCEOF
 
-    log_ok "Display: ${'$'}{SCREEN_WIDTH}x${'$'}{SCREEN_HEIGHT} @ scale ${'$'}{DISPLAY_SCALE}"
+    log_ok "Display: ${'$'}{SCREEN_WIDTH}x${'$'}{SCREEN_HEIGHT} @ scale ${'$'}{DISPLAY_SCALE} (transform: ${'$'}{DISPLAY_TRANSFORM:-normal})"
 
     DESKTOP_ENV="${'$'}{DESKTOP_ENV:-phosh}"
     log_info "Desktop Environment: ${'$'}DESKTOP_ENV"

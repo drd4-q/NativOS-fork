@@ -57,6 +57,18 @@ class RootfsManager(private val context: Context) {
     private val configFile: File get() = File(baseDir, "distro.conf")
     private val setupCompleteFile: File get() = File(baseDir, "SETUP_COMPLETE")
     private val rootShell = RootShell(context)
+    val loopDeviceManager = LoopDeviceManager(context)
+    val rootfsImageFile: File get() = File(baseDir, LoopDeviceManager.DEFAULT_IMAGE_NAME)
+
+    fun isImageMode(): Boolean = NativOSPreferences.storageMode(context) == "image"
+
+    fun ensureImageMounted(): Boolean {
+        if (!isImageMode()) return true
+        if (loopDeviceManager.isMounted(rootfsDir)) return true
+        if (!rootfsImageFile.exists()) return false
+        val fsType = NativOSPreferences.storageFsType(context)
+        return loopDeviceManager.mountImage(rootfsImageFile, rootfsDir, fsType)
+    }
 
     fun getInstalledDistro(): String =
         if (configFile.exists()) configFile.readText().trim()
@@ -64,10 +76,14 @@ class RootfsManager(private val context: Context) {
 
     fun getRootfsPath(): String = rootfsDir.absolutePath
 
-    fun isRootfsReady(): Boolean =
-        rootfsDir.exists() &&
-        (File(rootfsDir, "bin").exists() || File(rootfsDir, "usr/bin").exists() || File(rootfsDir, "bin/sh").exists()) &&
-        File(rootfsDir, "usr").exists() && File(rootfsDir, "etc").exists()
+    fun isRootfsReady(): Boolean {
+        if (isImageMode()) {
+            ensureImageMounted()
+        }
+        return rootfsDir.exists() &&
+            (File(rootfsDir, "bin").exists() || File(rootfsDir, "usr/bin").exists() || File(rootfsDir, "bin/sh").exists()) &&
+            File(rootfsDir, "usr").exists() && File(rootfsDir, "etc").exists()
+    }
 
     /**
      * Unmount all mounts located under rootfsDir before any wipe or extraction.
@@ -77,6 +93,7 @@ class RootfsManager(private val context: Context) {
     fun unmountAllMountsUnderRootfs() {
         if (!rootShell.hasRoot()) return
         try {
+            loopDeviceManager.unmountExternalDrives(rootfsDir)
             val rootPath = rootfsDir.absolutePath
             val mounts = rootShell.exec("cat /proc/mounts").lines()
             val targets = mounts.mapNotNull { line ->
@@ -89,6 +106,9 @@ class RootfsManager(private val context: Context) {
             for (target in targets) {
                 rootShell.exec("umount -l $target 2>/dev/null || true")
                 Log.i(TAG, "Unmounted: $target")
+            }
+            if (isImageMode()) {
+                loopDeviceManager.unmountImage(rootfsDir)
             }
         } catch (e: Exception) {
             Log.w(TAG, "Failed to unmount mounts before extraction: ${e.message}")
@@ -403,14 +423,24 @@ class RootfsManager(private val context: Context) {
             // and deletes the downloaded tarball or host files!
             unmountAllMountsUnderRootfs()
 
-            if (rootfsDir.exists()) {
-                if (rootShell.hasRoot()) {
-                    rootShell.exec("rm -rf ${rootfsDir.absolutePath}")
-                } else {
-                    rootfsDir.deleteRecursively()
+            if (isImageMode() && rootShell.hasRoot()) {
+                if (!rootfsImageFile.exists()) {
+                    onProgress(0.05, "Creating sparse rootfs disk image...")
+                    val fsType = NativOSPreferences.storageFsType(context)
+                    loopDeviceManager.createSparseImage(rootfsImageFile, LoopDeviceManager.DEFAULT_IMAGE_SIZE_GB, fsType)
                 }
+                rootfsDir.mkdirs()
+                loopDeviceManager.mountImage(rootfsImageFile, rootfsDir, NativOSPreferences.storageFsType(context))
+            } else {
+                if (rootfsDir.exists()) {
+                    if (rootShell.hasRoot()) {
+                        rootShell.exec("rm -rf ${rootfsDir.absolutePath}")
+                    } else {
+                        rootfsDir.deleteRecursively()
+                    }
+                }
+                rootfsDir.mkdirs()
             }
-            rootfsDir.mkdirs()
 
             onProgress(0.1, "Extracting Linux filesystem...")
             Log.i(TAG, "Extracting rootfs from ${tarball.absolutePath}")

@@ -26,6 +26,8 @@ class ChrootManager(private val context: Context) {
     }
 
     private val rootShell = RootShell(context)
+    private val performanceManager = PerformanceManager(context)
+    private val loopDeviceManager = LoopDeviceManager(context)
 
     private val baseDir: File get() = context.filesDir
     private val rootfsDir: File get() = File(baseDir, "rootfs")
@@ -45,10 +47,17 @@ class ChrootManager(private val context: Context) {
 
     fun hasRoot(): Boolean = rootShell.hasRoot()
 
-    fun isRootfsReady(): Boolean =
-        File(rootfsDir, "bin/sh").exists() ||
-        File(rootfsDir, "usr/bin/bash").exists() ||
-        File(rootfsDir, "bin/bash").exists()
+    fun isRootfsReady(): Boolean {
+        if (NativOSPreferences.storageMode(context) == "image") {
+            val img = File(baseDir, LoopDeviceManager.DEFAULT_IMAGE_NAME)
+            if (img.exists() && !loopDeviceManager.isMounted(rootfsDir)) {
+                loopDeviceManager.mountImage(img, rootfsDir, NativOSPreferences.storageFsType(context))
+            }
+        }
+        return File(rootfsDir, "bin/sh").exists() ||
+            File(rootfsDir, "usr/bin/bash").exists() ||
+            File(rootfsDir, "bin/bash").exists()
+    }
 
     fun isPhoshInstalled(): Boolean =
         File(rootfsDir, "usr/bin/phosh-session").exists() ||
@@ -82,6 +91,14 @@ class ChrootManager(private val context: Context) {
 
     private fun ensureMountsLocked() {
         if (!hasRoot()) return
+
+        // If running in image mode, mount the rootfs.img loop device before bind-mounting
+        if (NativOSPreferences.storageMode(context) == "image") {
+            val img = File(baseDir, LoopDeviceManager.DEFAULT_IMAGE_NAME)
+            if (img.exists() && !loopDeviceManager.isMounted(rootfsDir)) {
+                loopDeviceManager.mountImage(img, rootfsDir, NativOSPreferences.storageFsType(context))
+            }
+        }
 
         // Services such as polkit drop root privileges and must still be able to
         // enter the chroot root. Android's private parent directory remains 0700.
@@ -138,6 +155,12 @@ class ChrootManager(private val context: Context) {
 
         // Grant app access to GPU for Termux:X11 DRI3
         rootShell.exec("chmod 666 /dev/dri/* 2>/dev/null")
+
+        // Grant app access to input devices (/dev/input/event*) for low-latency touch/evdev handling
+        rootShell.exec("chmod 666 /dev/input/* 2>/dev/null || true")
+
+        // Auto-mount external USB OTG and MicroSD storage into chroot
+        loopDeviceManager.mountExternalDrives(rootfsDir)
 
         // Create runtime directories inside chroot
         execChroot("mkdir -p /tmp/.X11-unix /tmp/runtime-root /run/nativOS /root")
@@ -1290,7 +1313,14 @@ class ChrootManager(private val context: Context) {
         val gpuMode = if (resolvedGpu == "turnip" && !hardwareGpu) "software" else resolvedGpu
         val shell = if (File(rootfsDir, "usr/bin/bash").exists() || File(rootfsDir, "bin/bash").exists()) "/bin/bash" else "/bin/sh"
         val desktopEnv = NativOSPreferences.desktopEnvironment(context)
-        val initCmd = "${NativOSInit.SCRIPT_PATH} start --width $screenWidth --height $screenHeight --scale $displayScale --gpu $gpuMode --desktop $desktopEnv --tmpdir ${tmpDir.absolutePath} --app-uid ${context.applicationInfo.uid}"
+        val rotation = NativOSPreferences.touchRotationCorrection(context)
+        val transformStr = when (rotation) {
+            90 -> "90"
+            180 -> "180"
+            270 -> "270"
+            else -> "normal"
+        }
+        val initCmd = "${NativOSInit.SCRIPT_PATH} start --width $screenWidth --height $screenHeight --scale $displayScale --gpu $gpuMode --desktop $desktopEnv --tmpdir ${tmpDir.absolutePath} --app-uid ${context.applicationInfo.uid} --transform $transformStr"
 
         Log.i(TAG, "Starting $desktopEnv session via nativOS-init (display: ${screenWidth}x$screenHeight @ scale $displayScale, GPU: $gpuMode)")
 
@@ -1300,6 +1330,10 @@ class ChrootManager(private val context: Context) {
             .redirectErrorStream(true)
             .start()
         sessionProcess = startedSession
+
+        // Apply high performance profile (CPU/GPU lock, VM tuning, and OOM killer protection)
+        performanceManager.applyPerformanceProfile()
+        performanceManager.protectCurrentSession()
 
         // Log output from the session
         Thread {
@@ -1439,6 +1473,7 @@ class ChrootManager(private val context: Context) {
         }
         stopTrackedSessionProcess()
         killRootfsProcesses()
+        performanceManager.restoreOriginalGovernors()
         unmountAll()
         Log.i(TAG, "Session stopped")
     }
@@ -1447,6 +1482,7 @@ class ChrootManager(private val context: Context) {
     fun unmountAll() {
         if (!hasRoot()) return
         try {
+            loopDeviceManager.unmountExternalDrives(rootfsDir)
             val rootPath = rootfsDir.absolutePath
             val mounts = rootShell.exec("cat /proc/mounts").lines()
             val targets = mounts.mapNotNull { line ->
@@ -1463,6 +1499,9 @@ class ChrootManager(private val context: Context) {
                 } catch (e: Exception) {
                     Log.w(TAG, "Failed to unmount $target: ${e.message}")
                 }
+            }
+            if (NativOSPreferences.storageMode(context) == "image") {
+                loopDeviceManager.unmountImage(rootfsDir)
             }
         } catch (e: Exception) {
             Log.w(TAG, "Error in unmountAll: ${e.message}")
