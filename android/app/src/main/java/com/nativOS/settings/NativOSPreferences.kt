@@ -308,5 +308,40 @@ object NativOSPreferences {
         context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
             .edit().putBoolean(MESA_GLTHREAD, enabled).apply()
     }
+
+    private const val ALSA_DIRECT_AUDIO = "alsa_direct_audio"
+    private const val HW_VIDEO_DECODING = "hw_video_decoding"
+    private const val DIRECT_DRM_MODE = "direct_drm_mode"
+
+    /** Direct ALSA hardware audio bypassing PulseAudio TCP latency */
+    fun alsaDirectAudio(context: Context): Boolean =
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+            .getBoolean(ALSA_DIRECT_AUDIO, true)
+
+    fun setAlsaDirectAudio(context: Context, enabled: Boolean) {
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+            .edit().putBoolean(ALSA_DIRECT_AUDIO, enabled).apply()
+    }
+
+    /** Hardware video acceleration via Snapdragon Venus / V4L2 M2M */
+    fun hardwareVideoDecoding(context: Context): Boolean =
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+            .getBoolean(HW_VIDEO_DECODING, true)
+
+    fun setHardwareVideoDecoding(context: Context, enabled: Boolean) {
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+            .edit().putBoolean(HW_VIDEO_DECODING, enabled).apply()
+    }
+
+    /** Experimental Direct DRM/KMS mode: stop surfaceflinger and output to /dev/dri/card0 directly */
+    fun directDrmMode(context: Context): Boolean =
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+            .getBoolean(DIRECT_DRM_MODE, false)
+
+    fun setDirectDrmMode(context: Context, enabled: Boolean) {
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+            .edit().putBoolean(DIRECT_DRM_MODE, enabled).apply()
+    }
 }
+
 

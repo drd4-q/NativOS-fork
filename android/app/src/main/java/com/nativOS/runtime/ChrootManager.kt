@@ -159,6 +159,37 @@ class ChrootManager(private val context: Context) {
         // Grant app access to input devices (/dev/input/event*) for low-latency touch/evdev handling
         rootShell.exec("chmod 666 /dev/input/* 2>/dev/null || true")
 
+        // ALSA direct audio: make sound nodes accessible and configure default card
+        if (NativOSPreferences.alsaDirectAudio(context)) {
+            rootShell.exec("chmod -R 666 /dev/snd 2>/dev/null || true")
+            val asoundConf = File(rootfsDir, "etc/asound.conf")
+            try {
+                asoundConf.parentFile?.mkdirs()
+                asoundConf.writeText(
+                    """
+                    # NativOS Direct ALSA Configuration (Qualcomm SoC)
+                    pcm.!default {
+                        type plug
+                        slave.pcm "hw:0,0"
+                    }
+                    ctl.!default {
+                        type hw
+                        card 0
+                    }
+                    """.trimIndent()
+                )
+                Log.i(TAG, "Configured direct ALSA hardware audio (/etc/asound.conf)")
+            } catch (e: Exception) {
+                Log.w(TAG, "Could not write /etc/asound.conf: ${e.message}")
+            }
+        }
+
+        // Hardware video decoding: grant access to Qualcomm Venus VPU and memory heaps
+        if (NativOSPreferences.hardwareVideoDecoding(context)) {
+            rootShell.exec("chmod 666 /dev/video* /dev/media* /dev/ion 2>/dev/null || true")
+            Log.i(TAG, "Granted direct access to hardware video codecs (/dev/video*)")
+        }
+
         // Auto-mount external USB OTG and MicroSD storage into chroot
         loopDeviceManager.mountExternalDrives(rootfsDir)
 
@@ -1322,9 +1353,14 @@ class ChrootManager(private val context: Context) {
         }
         val wlrRenderer = NativOSPreferences.wlrRenderer(context)
         val mesaGlThread = NativOSPreferences.mesaGlThread(context)
-        val initCmd = "${NativOSInit.SCRIPT_PATH} start --width $screenWidth --height $screenHeight --scale $displayScale --gpu $gpuMode --desktop $desktopEnv --tmpdir ${tmpDir.absolutePath} --app-uid ${context.applicationInfo.uid} --transform $transformStr --wlr-renderer $wlrRenderer --mesa-glthread $mesaGlThread"
+        val directDrm = NativOSPreferences.directDrmMode(context)
+        if (directDrm) {
+            Log.i(TAG, "Stopping SurfaceFlinger for Native Direct DRM session...")
+            rootShell.exec("stop surfaceflinger")
+        }
+        val initCmd = "${NativOSInit.SCRIPT_PATH} start --width $screenWidth --height $screenHeight --scale $displayScale --gpu $gpuMode --desktop $desktopEnv --tmpdir ${tmpDir.absolutePath} --app-uid ${context.applicationInfo.uid} --transform $transformStr --wlr-renderer $wlrRenderer --mesa-glthread $mesaGlThread --direct-drm $directDrm"
 
-        Log.i(TAG, "Starting $desktopEnv session via nativOS-init (display: ${screenWidth}x$screenHeight @ scale $displayScale, GPU: $gpuMode, renderer: $wlrRenderer, glthread: $mesaGlThread)")
+        Log.i(TAG, "Starting $desktopEnv session via nativOS-init (display: ${screenWidth}x$screenHeight @ scale $displayScale, GPU: $gpuMode, renderer: $wlrRenderer, glthread: $mesaGlThread, directDrm: $directDrm)")
 
         val su = rootShell.findSuPath() ?: return
         val fullCommand = "chroot ${rootfsDir.absolutePath} /usr/bin/env -i $shell -c ${shellQuote(initCmd)}"
@@ -1475,6 +1511,10 @@ class ChrootManager(private val context: Context) {
         }
         stopTrackedSessionProcess()
         killRootfsProcesses()
+        if (NativOSPreferences.directDrmMode(context)) {
+            Log.i(TAG, "Restoring SurfaceFlinger after Direct DRM session...")
+            rootShell.exec("start surfaceflinger")
+        }
         performanceManager.restoreOriginalGovernors()
         unmountAll()
         Log.i(TAG, "Session stopped")

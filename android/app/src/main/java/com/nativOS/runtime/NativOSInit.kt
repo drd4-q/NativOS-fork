@@ -40,6 +40,7 @@ NC='\033[0m'
 DISPLAY_TRANSFORM="${'$'}{DISPLAY_TRANSFORM:-normal}"
 WLR_RENDERER_PREF="${'$'}{WLR_RENDERER_PREF:-auto}"
 MESA_GLTHREAD_PREF="${'$'}{MESA_GLTHREAD_PREF:-true}"
+DIRECT_DRM_PREF="${'$'}{DIRECT_DRM_PREF:-false}"
 
 log_info() { echo -e "${'$'}{BLUE}[nativOS-init]${'$'}{NC} ${'$'}1"; }
 log_ok() { echo -e "${'$'}{GREEN}[nativOS-init:OK]${'$'}{NC} ${'$'}1"; }
@@ -59,6 +60,7 @@ parse_start_args() {
             --transform) DISPLAY_TRANSFORM="${'$'}2"; shift 2 ;;
             --wlr-renderer) WLR_RENDERER_PREF="${'$'}2"; shift 2 ;;
             --mesa-glthread) MESA_GLTHREAD_PREF="${'$'}2"; shift 2 ;;
+            --direct-drm) DIRECT_DRM_PREF="${'$'}2"; shift 2 ;;
             *) shift ;;
         esac
     done
@@ -81,6 +83,7 @@ stage_sysinit() {
 
     mkdir -p "${'$'}RUN_DIR" "${'$'}LOG_DIR" /run/dbus /run/sshd /tmp/.X11-unix /etc/nativOS
     chmod 0755 "${'$'}RUN_DIR" "${'$'}LOG_DIR" /run/dbus
+    chmod -R 666 /dev/snd /dev/video* /dev/media* /dev/ion 2>/dev/null || true
 
     [ -e /dev/fd ] || ln -snf /proc/self/fd /dev/fd 2>/dev/null || true
     [ -e /dev/stdin ] || ln -snf /proc/self/fd/0 /dev/stdin 2>/dev/null || true
@@ -258,10 +261,21 @@ stage_desktop() {
         export GALLIUM_THREAD=1
     fi
 
-    export WLR_BACKENDS=x11
-    export WLR_X11_OUTPUTS=1
-    export WLR_DRM_NO_ATOMIC=1
-    export WLR_DRM_DEVICES=""
+    # Hardware video acceleration (Snapdragon VPU / V4L2 M2M)
+    export LIBVA_DRIVER_NAME=v4l2
+    export GST_VAAPI_ALL_DRIVERS=1
+
+    if [ "${'$'}DIRECT_DRM_PREF" = "true" ]; then
+        log_info "Activating Native Direct DRM/KMS mode on /dev/dri/card0"
+        export WLR_BACKENDS=drm
+        export WLR_DRM_DEVICES=/dev/dri/card0
+        export WLR_DRM_NO_ATOMIC=0
+    else
+        export WLR_BACKENDS=x11
+        export WLR_X11_OUTPUTS=1
+        export WLR_DRM_NO_ATOMIC=1
+        export WLR_DRM_DEVICES=""
+    fi
     export TMPDIR="${'$'}HOST_TMPDIR"
 
     # SDL and Qt apps use X11 since phoc runs as nested X11 compositor.

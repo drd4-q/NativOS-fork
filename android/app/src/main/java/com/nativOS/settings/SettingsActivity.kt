@@ -314,6 +314,49 @@ class SettingsActivity : Activity() {
         }, PremiumUi.matchWidth())
 
         content.addView(PremiumUi.verticalSpace(this, 26))
+        content.addView(PremiumUi.sectionLabel(this, "Аппаратные интерфейсы и мультимедиа"))
+        content.addView(group().apply {
+            addView(switchRow(
+                "Прямой звук через ALSA (Low Latency)",
+                "Прямой доступ к звуковой карте (/dev/snd) без задержек PulseAudio",
+                NativOSPreferences.alsaDirectAudio(this@SettingsActivity)
+            ) { checked ->
+                NativOSPreferences.setAlsaDirectAudio(this@SettingsActivity, checked)
+            })
+            addView(PremiumUi.separator(this@SettingsActivity))
+            addView(switchRow(
+                "Аппаратный видеодекодер Snapdragon (VPU)",
+                "Аппаратное ускорение H.264/HEVC/VP9 (/dev/video32)",
+                NativOSPreferences.hardwareVideoDecoding(this@SettingsActivity)
+            ) { checked ->
+                NativOSPreferences.setHardwareVideoDecoding(this@SettingsActivity, checked)
+            })
+            addView(PremiumUi.separator(this@SettingsActivity))
+            addView(switchRow(
+                "Прямой вывод Direct DRM/KMS (Экспериментально)",
+                "Остановка SurfaceFlinger и вывод на панель M17 напрямую @ 120Hz",
+                NativOSPreferences.directDrmMode(this@SettingsActivity)
+            ) { checked ->
+                if (checked) {
+                    AlertDialog.Builder(this@SettingsActivity)
+                        .setTitle("Direct DRM/KMS Режим")
+                        .setMessage("Внимание: этот режим останавливает SurfaceFlinger (графику Android) на время работы сессии Linux и отдает экран /dev/dri/card0 напрямую Wayland-композитору на 120 FPS.\n\nПри завершении сессии SurfaceFlinger будет перезапущен автоматически. Включить?")
+                        .setPositiveButton("Включить") { _, _ ->
+                            NativOSPreferences.setDirectDrmMode(this@SettingsActivity, true)
+                            updateState()
+                        }
+                        .setNegativeButton("Отмена") { _, _ ->
+                            updateState()
+                        }
+                        .show()
+                } else {
+                    NativOSPreferences.setDirectDrmMode(this@SettingsActivity, false)
+                    updateState()
+                }
+            })
+        }, PremiumUi.matchWidth())
+
+        content.addView(PremiumUi.verticalSpace(this, 26))
         content.addView(PremiumUi.sectionLabel(this, "Снимки и резервные копии"))
         content.addView(group().apply {
             addView(row(
