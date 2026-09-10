@@ -342,6 +342,29 @@ object NativOSPreferences {
         context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
             .edit().putBoolean(DIRECT_DRM_MODE, enabled).apply()
     }
+
+    private const val LOCK_120HZ_TOUCH_BOOST = "lock_120hz_touch_boost"
+    private const val ADRENO_GPU_BUS_LOCK = "adreno_gpu_bus_lock"
+
+    /** Lock 120Hz refresh rate and tune touch edge/sampling for desktop */
+    fun lock120HzAndTouchBoost(context: Context): Boolean =
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+            .getBoolean(LOCK_120HZ_TOUCH_BOOST, true)
+
+    fun setLock120HzAndTouchBoost(context: Context, enabled: Boolean) {
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+            .edit().putBoolean(LOCK_120HZ_TOUCH_BOOST, enabled).apply()
+    }
+
+    /** Adreno GPU hardware memory bus lock and minimum clock lock */
+    fun adrenoGpuBusLock(context: Context): Boolean =
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+            .getBoolean(ADRENO_GPU_BUS_LOCK, true)
+
+    fun setAdrenoGpuBusLock(context: Context, enabled: Boolean) {
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+            .edit().putBoolean(ADRENO_GPU_BUS_LOCK, enabled).apply()
+    }
 }
 
 

@@ -311,6 +311,22 @@ class SettingsActivity : Activity() {
             ) { checked ->
                 NativOSPreferences.setMesaGlThread(this@SettingsActivity, checked)
             })
+            addView(PremiumUi.separator(this@SettingsActivity))
+            addView(switchRow(
+                "Принудительные 120 Гц и Edge-Touch",
+                "Фиксация экрана M17 на 120 Гц и снятие мертвых зон тача у границ",
+                NativOSPreferences.lock120HzAndTouchBoost(this@SettingsActivity)
+            ) { checked ->
+                NativOSPreferences.setLock120HzAndTouchBoost(this@SettingsActivity, checked)
+            })
+            addView(PremiumUi.separator(this@SettingsActivity))
+            addView(switchRow(
+                "Аппаратный лок шины Adreno GPU",
+                "Предотвращение микрофризов Adreno KGSL при выводе окон",
+                NativOSPreferences.adrenoGpuBusLock(this@SettingsActivity)
+            ) { checked ->
+                NativOSPreferences.setAdrenoGpuBusLock(this@SettingsActivity, checked)
+            })
         }, PremiumUi.matchWidth())
 
         content.addView(PremiumUi.verticalSpace(this, 26))
@@ -340,7 +356,7 @@ class SettingsActivity : Activity() {
                 if (checked) {
                     AlertDialog.Builder(this@SettingsActivity)
                         .setTitle("Direct DRM/KMS Режим")
-                        .setMessage("Внимание: этот режим останавливает SurfaceFlinger (графику Android) на время работы сессии Linux и отдает экран /dev/dri/card0 напрямую Wayland-композитору на 120 FPS.\n\nПри завершении сессии SurfaceFlinger будет перезапущен автоматически. Включить?")
+                        .setMessage("Внимание: этот режим останавливает SurfaceFlinger (графику Android) на время работы сессии Linux и отдает экран /dev/dri/card0 напрямую Wayland-композитору на 120 FPS.\n\nВстроенный аварийный сторож (Safety Watchdog) автоматически восстановит SurfaceFlinger при любом сбое или сворачивании приложения. Включить?")
                         .setPositiveButton("Включить") { _, _ ->
                             NativOSPreferences.setDirectDrmMode(this@SettingsActivity, true)
                             updateState()

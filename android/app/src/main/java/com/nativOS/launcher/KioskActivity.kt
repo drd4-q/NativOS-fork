@@ -33,6 +33,7 @@ import com.nativOS.bridge.BridgeService
 import com.nativOS.runtime.ChrootManager
 import com.nativOS.runtime.DisplayController
 import com.nativOS.runtime.RootfsManager
+import com.nativOS.runtime.SurfaceFlingerWatchdog
 import com.nativOS.setup.SetupWizardActivity
 import com.nativOS.storage.SharedFolderSync
 import com.nativOS.settings.NativOSPreferences
@@ -1062,10 +1063,17 @@ class KioskActivity : Activity() {
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
             window.insetsController?.show(WindowInsets.Type.statusBars() or WindowInsets.Type.navigationBars())
         }
+        SurfaceFlingerWatchdog.ensureSurfaceFlingerRunning(applicationContext)
         moveTaskToBack(true)
     }
 
+    override fun onStop() {
+        SurfaceFlingerWatchdog.ensureSurfaceFlingerRunning(applicationContext)
+        super.onStop()
+    }
+
     override fun onDestroy() {
+        SurfaceFlingerWatchdog.ensureSurfaceFlingerRunning(applicationContext)
         if (activeInstance?.get() === this) activeInstance = null
         x11ServiceClient?.disconnect()
         x11ServiceClient = null

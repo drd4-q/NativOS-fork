@@ -19,6 +19,7 @@ class PerformanceManager(private val context: Context) {
     }
 
     private val rootShell = RootShell(context)
+    private val displayRefreshRateManager = DisplayRefreshRateManager(context)
     private val savedGovernorsFile: File get() = File(context.filesDir, SAVED_GOVERNORS_FILE)
 
     // ── OOM Killer Protection ──
@@ -124,6 +125,27 @@ class PerformanceManager(private val context: Context) {
                 ensureSwapActive()
             }
 
+            // 7. Lock Adreno GPU memory bus and clock to eliminate micro-stutter
+            if (NativOSPreferences.adrenoGpuBusLock(context)) {
+                val adrenoLockCmd = """
+                    if [ -d /sys/class/kgsl/kgsl-3d0 ]; then
+                        echo 1 > /sys/class/kgsl/kgsl-3d0/force_bus_on 2>/dev/null || true
+                        echo 1 > /sys/class/kgsl/kgsl-3d0/force_clk_on 2>/dev/null || true
+                        echo 1 > /sys/class/kgsl/kgsl-3d0/force_rail_on 2>/dev/null || true
+                        echo 1 > /sys/class/kgsl/kgsl-3d0/force_no_nap 2>/dev/null || true
+                        if [ -f /sys/class/kgsl/kgsl-3d0/min_clock_mhz ]; then
+                            echo 650 > /sys/class/kgsl/kgsl-3d0/min_clock_mhz 2>/dev/null || \
+                            echo 490 > /sys/class/kgsl/kgsl-3d0/min_clock_mhz 2>/dev/null || true
+                        fi
+                    fi
+                """.trimIndent()
+                rootShell.exec(adrenoLockCmd)
+                Log.i(TAG, "Adreno KGSL memory bus and minimum clock locked")
+            }
+
+            // 8. Apply 120Hz display lock and touch edge optimizations
+            displayRefreshRateManager.applyDisplayOptimizations()
+
             Log.i(TAG, "Applied full performance profile (CPU & GPU governors locked, VM tuned)")
         } catch (e: Exception) {
             Log.w(TAG, "Failed to apply performance profile: ${e.message}")
@@ -136,6 +158,23 @@ class PerformanceManager(private val context: Context) {
     fun restoreOriginalGovernors() {
         if (!rootShell.hasRoot()) return
         try {
+            // Reset Adreno KGSL hardware bus and clock locks
+            val adrenoResetCmd = """
+                if [ -d /sys/class/kgsl/kgsl-3d0 ]; then
+                    echo 0 > /sys/class/kgsl/kgsl-3d0/force_bus_on 2>/dev/null || true
+                    echo 0 > /sys/class/kgsl/kgsl-3d0/force_clk_on 2>/dev/null || true
+                    echo 0 > /sys/class/kgsl/kgsl-3d0/force_rail_on 2>/dev/null || true
+                    echo 0 > /sys/class/kgsl/kgsl-3d0/force_no_nap 2>/dev/null || true
+                    if [ -f /sys/class/kgsl/kgsl-3d0/min_clock_mhz ]; then
+                        echo 266 > /sys/class/kgsl/kgsl-3d0/min_clock_mhz 2>/dev/null || true
+                    fi
+                fi
+            """.trimIndent()
+            rootShell.exec(adrenoResetCmd)
+
+            // Restore display refresh rate and touch edge settings
+            displayRefreshRateManager.restoreOriginalSettings()
+
             if (savedGovernorsFile.exists()) {
                 val lines = savedGovernorsFile.readLines()
                 for (line in lines) {

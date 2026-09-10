@@ -1355,7 +1355,8 @@ class ChrootManager(private val context: Context) {
         val mesaGlThread = NativOSPreferences.mesaGlThread(context)
         val directDrm = NativOSPreferences.directDrmMode(context)
         if (directDrm) {
-            Log.i(TAG, "Stopping SurfaceFlinger for Native Direct DRM session...")
+            Log.i(TAG, "Stopping SurfaceFlinger for Native Direct DRM session (with Safety Watchdog)...")
+            SurfaceFlingerWatchdog.armWatchdog(context, rootShell, timeoutMs = 8_000L)
             rootShell.exec("stop surfaceflinger")
         }
         val initCmd = "${NativOSInit.SCRIPT_PATH} start --width $screenWidth --height $screenHeight --scale $displayScale --gpu $gpuMode --desktop $desktopEnv --tmpdir ${tmpDir.absolutePath} --app-uid ${context.applicationInfo.uid} --transform $transformStr --wlr-renderer $wlrRenderer --mesa-glthread $mesaGlThread --direct-drm $directDrm"
@@ -1416,45 +1417,54 @@ class ChrootManager(private val context: Context) {
             "pgrep -x mate-session >/dev/null 2>&1"
         val socketCheck = "test -S /tmp/runtime-root/wayland-0 || test -S /tmp/.X11-unix/X0"
 
-        while (System.currentTimeMillis() < deadline) {
-            // 1. Full check: socket + DE process
-            if (execChroot("($socketCheck) && ($deCheck)") == 0) {
-                Log.i(TAG, "Desktop readiness check passed (socket + process)")
-                Thread.sleep(500)
-                return true
-            }
+        val ready = run {
+            while (System.currentTimeMillis() < deadline) {
+                // 1. Full check: socket + DE process
+                if (execChroot("($socketCheck) && ($deCheck)") == 0) {
+                    Log.i(TAG, "Desktop readiness check passed (socket + process)")
+                    Thread.sleep(500)
+                    return@run true
+                }
 
-            // 2. Fallback: DE process is running
-            if (execChroot(deCheck) == 0) {
-                Log.i(TAG, "Desktop process running — checking socket briefly")
-                for (i in 1..10) {
-                    Thread.sleep(300)
-                    if (execChroot(socketCheck) == 0) {
-                        Log.i(TAG, "Desktop socket appeared")
-                        return true
+                // 2. Fallback: DE process is running
+                if (execChroot(deCheck) == 0) {
+                    Log.i(TAG, "Desktop process running — checking socket briefly")
+                    for (i in 1..10) {
+                        Thread.sleep(300)
+                        if (execChroot(socketCheck) == 0) {
+                            Log.i(TAG, "Desktop socket appeared")
+                            return@run true
+                        }
+                    }
+                    Log.i(TAG, "Desktop process active (stabilised)")
+                    return@run true
+                }
+
+                // 3. If wrapper exited, only give up if past the grace period and no desktop process exists
+                if (sessionProcess?.isAlive == false && System.currentTimeMillis() > minWaitDeadline) {
+                    if (execChroot(deCheck) != 0) {
+                        Log.e(TAG, "Session process terminated and no desktop process is running")
+                        return@run false
                     }
                 }
-                Log.i(TAG, "Desktop process active (stabilised)")
-                return true
-            }
 
-            // 3. If wrapper exited, only give up if past the grace period and no desktop process exists
-            if (sessionProcess?.isAlive == false && System.currentTimeMillis() > minWaitDeadline) {
-                if (execChroot(deCheck) != 0) {
-                    Log.e(TAG, "Session process terminated and no desktop process is running")
-                    return false
+                try {
+                    Thread.sleep(400)
+                } catch (_: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                    return@run false
                 }
             }
-
-            try {
-                Thread.sleep(400)
-            } catch (_: InterruptedException) {
-                Thread.currentThread().interrupt()
-                return false
-            }
+            Log.e(TAG, "Desktop did not become ready within ${timeoutMs}ms")
+            false
         }
-        Log.e(TAG, "Desktop did not become ready within ${timeoutMs}ms")
-        return false
+
+        if (ready) {
+            SurfaceFlingerWatchdog.disarmWatchdog()
+        } else {
+            SurfaceFlingerWatchdog.restoreSurfaceFlinger(context, rootShell)
+        }
+        return ready
     }
 
     private fun stopTrackedSessionProcess() {
@@ -1513,7 +1523,7 @@ class ChrootManager(private val context: Context) {
         killRootfsProcesses()
         if (NativOSPreferences.directDrmMode(context)) {
             Log.i(TAG, "Restoring SurfaceFlinger after Direct DRM session...")
-            rootShell.exec("start surfaceflinger")
+            SurfaceFlingerWatchdog.restoreSurfaceFlinger(context, rootShell)
         }
         performanceManager.restoreOriginalGovernors()
         unmountAll()
