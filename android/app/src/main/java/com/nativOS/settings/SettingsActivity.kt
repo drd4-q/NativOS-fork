@@ -34,6 +34,8 @@ class SettingsActivity : Activity() {
     private lateinit var debianCheck: TextView
     private lateinit var displayScaleSubtitle: TextView
     private lateinit var gpuDriverSubtitle: TextView
+    private lateinit var resolutionScaleSubtitle: TextView
+    private lateinit var wlrRendererSubtitle: TextView
     private lateinit var desktopEnvSubtitle: TextView
     private lateinit var touchModeSubtitle: TextView
     private lateinit var storageModeSubtitle: TextView
@@ -279,7 +281,7 @@ class SettingsActivity : Activity() {
         }, PremiumUi.matchWidth())
 
         content.addView(PremiumUi.verticalSpace(this, 26))
-        content.addView(PremiumUi.sectionLabel(this, "Графический ускоритель"))
+        content.addView(PremiumUi.sectionLabel(this, "Графический ускоритель и дисплей"))
         content.addView(group().apply {
             gpuDriverSubtitle = PremiumUi.text(this@SettingsActivity, "", 13f, PremiumUi.muted)
             addView(row(
@@ -287,6 +289,28 @@ class SettingsActivity : Activity() {
                 subtitleView = gpuDriverSubtitle,
                 trailingText = "›"
             ) { showGpuDialog() })
+            addView(PremiumUi.separator(this@SettingsActivity))
+            wlrRendererSubtitle = PremiumUi.text(this@SettingsActivity, "", 13f, PremiumUi.muted)
+            addView(row(
+                title = "Рендерер рабочего стола (wlroots)",
+                subtitleView = wlrRendererSubtitle,
+                trailingText = "›"
+            ) { showWlrRendererDialog() })
+            addView(PremiumUi.separator(this@SettingsActivity))
+            resolutionScaleSubtitle = PremiumUi.text(this@SettingsActivity, "", 13f, PremiumUi.muted)
+            addView(row(
+                title = "Разрешение экрана (Downsampling)",
+                subtitleView = resolutionScaleSubtitle,
+                trailingText = "›"
+            ) { showResolutionScaleDialog() })
+            addView(PremiumUi.separator(this@SettingsActivity))
+            addView(switchRow(
+                "Многопоточный OpenGL (mesa_glthread)",
+                "Асинхронный поток обработки вызовов графики Mesa",
+                NativOSPreferences.mesaGlThread(this@SettingsActivity)
+            ) { checked ->
+                NativOSPreferences.setMesaGlThread(this@SettingsActivity, checked)
+            })
         }, PremiumUi.matchWidth())
 
         content.addView(PremiumUi.verticalSpace(this, 26))
@@ -462,6 +486,24 @@ class SettingsActivity : Activity() {
             gpuDriverSubtitle.text = if (gpu == "auto") "Авто: ${detected.modelName} (${detected.recommendedDriver})" else "Принудительно: $gpu"
         }
 
+        if (::wlrRendererSubtitle.isInitialized) {
+            val rend = NativOSPreferences.wlrRenderer(this)
+            wlrRendererSubtitle.text = when (rend) {
+                "gles2" -> "Принудительно GPU GLES2"
+                "pixman" -> "Принудительно CPU Pixman"
+                else -> "Авто (GPU GLES2 с защитой)"
+            }
+        }
+
+        if (::resolutionScaleSubtitle.isInitialized) {
+            val resScale = NativOSPreferences.resolutionScalePercent(this)
+            resolutionScaleSubtitle.text = when (resScale) {
+                80 -> "80% (Сбалансированный режим, -36% нагрузки)"
+                67 -> "67% (Турбо-режим ~720p, 2.5x FPS)"
+                else -> "100% (Нативное разрешение)"
+            }
+        }
+
         val currentDe = NativOSPreferences.desktopEnvironment(this)
         if (::desktopEnvSubtitle.isInitialized) {
             val deInfo = RootfsManager.SUPPORTED_DESKTOPS.find { it.id == currentDe }
@@ -525,6 +567,48 @@ class SettingsActivity : Activity() {
             .setTitle("Выбор видеодрайвера")
             .setSingleChoiceItems(options, selectedIdx) { dialog, which ->
                 NativOSPreferences.setGpuDriver(this, values[which])
+                updateState()
+                dialog.dismiss()
+            }
+            .setNegativeButton("Отмена", null)
+            .show()
+    }
+
+    private fun showWlrRendererDialog() {
+        val options = arrayOf(
+            "Авто (GPU GLES2 с защитой и авто-откатом)",
+            "Принудительно GPU (GLES2 аппаратное ускорение)",
+            "Принудительно CPU (Pixman софтверный растеризатор)"
+        )
+        val values = arrayOf("auto", "gles2", "pixman")
+        val current = NativOSPreferences.wlrRenderer(this)
+        val selectedIdx = values.indexOf(current).coerceAtLeast(0)
+
+        AlertDialog.Builder(this)
+            .setTitle("Рендерер рабочего стола (wlroots)")
+            .setSingleChoiceItems(options, selectedIdx) { dialog, which ->
+                NativOSPreferences.setWlrRenderer(this, values[which])
+                updateState()
+                dialog.dismiss()
+            }
+            .setNegativeButton("Отмена", null)
+            .show()
+    }
+
+    private fun showResolutionScaleDialog() {
+        val options = arrayOf(
+            "100% — Нативное разрешение (Максимальная четкость)",
+            "80% — Сбалансированный режим (Снижение нагрузки на ~36%)",
+            "67% — Турбо-режим ~720p (Прирост FPS в 2.5 раза, для игр)"
+        )
+        val values = arrayOf(100, 80, 67)
+        val current = NativOSPreferences.resolutionScalePercent(this)
+        val selectedIdx = values.indexOf(current).coerceAtLeast(0)
+
+        AlertDialog.Builder(this)
+            .setTitle("Масштаб разрешения экрана (Downsampling)")
+            .setSingleChoiceItems(options, selectedIdx) { dialog, which ->
+                NativOSPreferences.setResolutionScalePercent(this, values[which])
                 updateState()
                 dialog.dismiss()
             }

@@ -1320,9 +1320,11 @@ class ChrootManager(private val context: Context) {
             270 -> "270"
             else -> "normal"
         }
-        val initCmd = "${NativOSInit.SCRIPT_PATH} start --width $screenWidth --height $screenHeight --scale $displayScale --gpu $gpuMode --desktop $desktopEnv --tmpdir ${tmpDir.absolutePath} --app-uid ${context.applicationInfo.uid} --transform $transformStr"
+        val wlrRenderer = NativOSPreferences.wlrRenderer(context)
+        val mesaGlThread = NativOSPreferences.mesaGlThread(context)
+        val initCmd = "${NativOSInit.SCRIPT_PATH} start --width $screenWidth --height $screenHeight --scale $displayScale --gpu $gpuMode --desktop $desktopEnv --tmpdir ${tmpDir.absolutePath} --app-uid ${context.applicationInfo.uid} --transform $transformStr --wlr-renderer $wlrRenderer --mesa-glthread $mesaGlThread"
 
-        Log.i(TAG, "Starting $desktopEnv session via nativOS-init (display: ${screenWidth}x$screenHeight @ scale $displayScale, GPU: $gpuMode)")
+        Log.i(TAG, "Starting $desktopEnv session via nativOS-init (display: ${screenWidth}x$screenHeight @ scale $displayScale, GPU: $gpuMode, renderer: $wlrRenderer, glthread: $mesaGlThread)")
 
         val su = rootShell.findSuPath() ?: return
         val fullCommand = "chroot ${rootfsDir.absolutePath} /usr/bin/env -i $shell -c ${shellQuote(initCmd)}"

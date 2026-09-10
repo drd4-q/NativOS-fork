@@ -147,36 +147,92 @@ class LoopDeviceManager(private val context: Context) {
 
             rootShell.exec("mkdir -p $usbMountDir $externalMountDir")
 
-            // List available block partitions for external drives
-            val blockDevices = rootShell.exec("ls /dev/block/sd* /dev/block/mmcblk1* 2>/dev/null")
+            // 1. Check if Android already mounted USB storage under /mnt/media_rw
+            val mediaRwMounts = rootShell.exec(
+                "for m in /mnt/media_rw/*; do [ -d \"${'$'}m\" ] && echo \"${'$'}m\"; done"
+            ).lines().map { it.trim() }.filter { it.isNotEmpty() }
+
+            for ((idx, mediaPath) in mediaRwMounts.withIndex()) {
+                val target = if (idx == 0) usbMountDir else "$externalMountDir/media$idx"
+                rootShell.exec("mkdir -p $target")
+                val mounts = rootShell.exec("cat /proc/mounts 2>/dev/null")
+                if (!mounts.contains(" $target ")) {
+                    rootShell.exec("mount --bind $mediaPath $target 2>/dev/null && chmod -R 0777 $target 2>/dev/null || true")
+                    if (rootShell.exec("cat /proc/mounts").contains(" $target ")) {
+                        Log.i(TAG, "Bound Android external media $mediaPath → $target")
+                    }
+                }
+            }
+
+            // 2. Scan for physical removable block devices (USB OTG, MicroSD)
+            // Strictly exclude internal UFS partitions (/dev/block/sda-sdf) and internal eMMC (mmcblk0)
+            val scanScript = """
+                for b in /sys/block/sd* /sys/block/mmcblk*; do
+                    [ -d "${'$'}b" ] || continue
+                    devname=${'$'}(basename "${'$'}b")
+                    [ "${'$'}devname" = "mmcblk0" ] && continue
+
+                    removable=${'$'}(cat "${'$'}b/removable" 2>/dev/null || echo 0)
+                    target_path=${'$'}(readlink -f "${'$'}b" 2>/dev/null || echo "")
+
+                    is_usb=0
+                    case "${'$'}target_path" in
+                        *usb*) is_usb=1 ;;
+                    esac
+
+                    # Skip non-removable internal storage (e.g. UFS sda-sdf)
+                    if [ "${'$'}removable" != "1" ] && [ "${'$'}is_usb" -eq 0 ]; then
+                        continue
+                    fi
+
+                    # Find partitions
+                    parts=${'$'}(ls -d /dev/block/${'$'}{devname}* 2>/dev/null | grep -E "^/dev/block/${'$'}{devname}(p?[0-9]+)$")
+                    if [ -n "${'$'}parts" ]; then
+                        echo "${'$'}parts"
+                    else
+                        echo "/dev/block/${'$'}devname"
+                    fi
+                done
+            """.trimIndent()
+
+            val removableDevices = rootShell.exec(scanScript)
                 .lines()
                 .map { it.trim() }
-                .filter { it.isNotEmpty() && !it.endsWith("sd") && !it.endsWith("mmcblk1") }
+                .filter { it.isNotEmpty() && !it.contains("No such") }
 
-            if (blockDevices.isEmpty()) {
-                Log.i(TAG, "No external USB/MicroSD block devices detected")
+            if (removableDevices.isEmpty()) {
+                Log.i(TAG, "No physical removable USB/MicroSD devices found")
                 return
             }
 
-            for ((index, dev) in blockDevices.withIndex()) {
-                val target = if (index == 0) usbMountDir else "$externalMountDir/disk$index"
+            var mountedCount = 0
+            for (dev in removableDevices) {
+                val target = if (mountedCount == 0 && !isMounted(File(usbMountDir))) usbMountDir else "$externalMountDir/disk$mountedCount"
                 rootShell.exec("mkdir -p $target")
 
-                val mounts = rootShell.exec("cat /proc/mounts")
-                if (mounts.contains(" $target ")) continue
+                val currentMounts = rootShell.exec("cat /proc/mounts 2>/dev/null")
+                if (currentMounts.contains(" $target ") || currentMounts.contains("$dev ")) continue
 
-                // Attempt mount with auto-detected filesystem or popular filesystems
                 val mountCmd = """
                     mount -o noatime,rw $dev $target 2>/dev/null ||
                     mount -t ext4 -o noatime,rw $dev $target 2>/dev/null ||
+                    mount -t btrfs -o noatime,rw $dev $target 2>/dev/null ||
                     mount -t vfat -o rw,umask=000 $dev $target 2>/dev/null ||
                     mount -t exfat -o rw,umask=000 $dev $target 2>/dev/null ||
-                    mount -t ntfs -o rw,umask=000 $dev $target 2>/dev/null || true
+                    mount -t ntfs -o rw,umask=000 $dev $target 2>/dev/null
                 """.trimIndent()
                 rootShell.exec(mountCmd)
 
-                rootShell.exec("chmod -R 0777 $target 2>/dev/null || true")
-                Log.i(TAG, "Mounted external storage $dev → $target")
+                // Verify if it actually mounted
+                val verifiedMounts = rootShell.exec("cat /proc/mounts 2>/dev/null")
+                if (verifiedMounts.contains(" $target ")) {
+                    rootShell.exec("chmod -R 0777 $target 2>/dev/null || true")
+                    Log.i(TAG, "Mounted external storage $dev → $target")
+                    mountedCount++
+                } else {
+                    // Clean up unused empty target directory
+                    rootShell.exec("rmdir $target 2>/dev/null || true")
+                }
             }
         } catch (e: Exception) {
             Log.w(TAG, "Error mounting external drives: ${e.message}")
@@ -196,6 +252,7 @@ class LoopDeviceManager(private val context: Context) {
             rootShell.exec("umount -l $usbMountDir 2>/dev/null || true")
             rootShell.exec("umount -l $externalMountDir/* 2>/dev/null || true")
             rootShell.exec("umount -l $externalMountDir 2>/dev/null || true")
+            rootShell.exec("rm -rf $externalMountDir/disk* 2>/dev/null || true")
             Log.i(TAG, "Unmounted external storage drives")
         } catch (e: Exception) {
             Log.w(TAG, "Error unmounting external drives: ${e.message}")

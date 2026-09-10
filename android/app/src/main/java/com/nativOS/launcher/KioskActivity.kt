@@ -776,6 +776,21 @@ class KioskActivity : Activity() {
 
             runOnUiThread {
                 try {
+                    val scalePercent = NativOSPreferences.resolutionScalePercent(this@KioskActivity)
+                    val x11Prefs = MainActivity.getPrefs()
+                    if (scalePercent < 100) {
+                        x11Prefs.displayResolutionMode.put("scaled")
+                        val termuxScale = (10000.0 / scalePercent).toInt()
+                        x11Prefs.displayScale.put(termuxScale)
+                        x11Prefs.displayStretch.put(true)
+                        x11Prefs.displayFilteringMode.put("linear")
+                        Log.i(TAG, "Configured scaled X11 display: ${scalePercent}% (scale factor $termuxScale)")
+                    } else {
+                        x11Prefs.displayResolutionMode.put("native")
+                        x11Prefs.displayScale.put(100)
+                        x11Prefs.displayFilteringMode.put("nearest")
+                    }
+
                     val x11Activity = MainActivity.getInstance()
                     x11Activity.initLorieView(this@KioskActivity)
                     lorieView = x11Activity.lorieView
@@ -854,9 +869,9 @@ class KioskActivity : Activity() {
             Log.i(TAG, "Starting test session...")
 
             // Match Phoc's nested output to the actual X11 surface dimensions.
-            val screenWidth = lorieView.width
-            val screenHeight = lorieView.height
-            Log.i(TAG, "Detected screen: ${screenWidth}x${screenHeight}")
+            val screenWidth = lorieView.x11Width
+            val screenHeight = lorieView.x11Height
+            Log.i(TAG, "Detected X11 screen: ${screenWidth}x${screenHeight} (view size: ${lorieView.width}x${lorieView.height})")
 
             chrootManager.startPhoshSession(screenWidth, screenHeight)
             updateOverlay(0.98, "Starting Linux desktop...", "Waiting for Phosh")

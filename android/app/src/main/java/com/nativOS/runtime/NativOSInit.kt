@@ -38,6 +38,8 @@ BLUE='\033[0;34m'
 NC='\033[0m'
 
 DISPLAY_TRANSFORM="${'$'}{DISPLAY_TRANSFORM:-normal}"
+WLR_RENDERER_PREF="${'$'}{WLR_RENDERER_PREF:-auto}"
+MESA_GLTHREAD_PREF="${'$'}{MESA_GLTHREAD_PREF:-true}"
 
 log_info() { echo -e "${'$'}{BLUE}[nativOS-init]${'$'}{NC} ${'$'}1"; }
 log_ok() { echo -e "${'$'}{GREEN}[nativOS-init:OK]${'$'}{NC} ${'$'}1"; }
@@ -55,6 +57,8 @@ parse_start_args() {
             --desktop) DESKTOP_ENV="${'$'}2"; shift 2 ;;
             --tmpdir) HOST_TMPDIR="${'$'}2"; shift 2 ;;
             --transform) DISPLAY_TRANSFORM="${'$'}2"; shift 2 ;;
+            --wlr-renderer) WLR_RENDERER_PREF="${'$'}2"; shift 2 ;;
+            --mesa-glthread) MESA_GLTHREAD_PREF="${'$'}2"; shift 2 ;;
             *) shift ;;
         esac
     done
@@ -182,16 +186,31 @@ stage_desktop() {
     export GSK_RENDERER=gl
     export GDK_RENDERING=vulkan
 
+    # Determine wlroots renderer (phoc compositor engine)
+    if [ "${'$'}WLR_RENDERER_PREF" = "gles2" ] || [ "${'$'}WLR_RENDERER_PREF" = "pixman" ]; then
+        export WLR_RENDERER="${'$'}WLR_RENDERER_PREF"
+    elif [ "${'$'}GPU_MODE" = "turnip" ] || [ "${'$'}GPU_MODE" = "zink" ] || [ "${'$'}GPU_MODE" = "virgl" ]; then
+        # Default to hardware-accelerated GLES2 compositor on hardware GPUs
+        export WLR_RENDERER=gles2
+    else
+        export WLR_RENDERER=pixman
+    fi
+    log_info "Desktop compositor renderer: ${'$'}WLR_RENDERER (pref: ${'$'}WLR_RENDERER_PREF)"
+
     if [ "${'$'}GPU_MODE" = "turnip" ]; then
         log_info "Enabling Turnip/Zink acceleration"
         export NATIVOS_GPU=turnip
-        export WLR_RENDERER=pixman
         unset LIBGL_ALWAYS_SOFTWARE
         unset GBM_ALWAYS_SOFTWARE
         export GALLIUM_DRIVER=zink
         export MESA_LOADER_DRIVER_OVERRIDE=zink
         export TU_DEBUG=noconform
         export ZINK_DESCRIPTORS=lazy
+        export MESA_VK_WSI_DEBUG=sw
+        export MESA_VK_WSI_PRESENT_MODE=mailbox
+        export MESA_SHADER_CACHE_DIR=/tmp/mesa_shader_cache
+        export MESA_SHADER_CACHE_MAX_SIZE=512M
+        mkdir -p /tmp/mesa_shader_cache 2>/dev/null || true
         # Find the native musl-compiled ICD first, then fall back to bundled package
         TURNIP_ICD=${'$'}(for p in /usr/lib/libvulkan_freedreno.so /usr/share/vulkan/icd.d/freedreno_icd.aarch64.json; do
             [ -e "${'$'}p" ] && echo /usr/share/vulkan/icd.d/freedreno_icd.aarch64.json && break
@@ -204,20 +223,25 @@ stage_desktop() {
     elif [ "${'$'}GPU_MODE" = "virgl" ]; then
         log_info "Enabling VirGL acceleration"
         export NATIVOS_GPU=virgl
-        export WLR_RENDERER=pixman
         unset LIBGL_ALWAYS_SOFTWARE
         unset GBM_ALWAYS_SOFTWARE
         export GALLIUM_DRIVER=virpipe
         export MESA_GL_VERSION_OVERRIDE=4.3
+        export MESA_SHADER_CACHE_DIR=/tmp/mesa_shader_cache
+        mkdir -p /tmp/mesa_shader_cache 2>/dev/null || true
     elif [ "${'$'}GPU_MODE" = "zink" ]; then
         log_info "Enabling Zink Vulkan acceleration"
         export NATIVOS_GPU=zink
-        export WLR_RENDERER=pixman
         unset LIBGL_ALWAYS_SOFTWARE
         unset GBM_ALWAYS_SOFTWARE
         export GALLIUM_DRIVER=zink
         export MESA_LOADER_DRIVER_OVERRIDE=zink
         export ZINK_DESCRIPTORS=lazy
+        export MESA_VK_WSI_DEBUG=sw
+        export MESA_VK_WSI_PRESENT_MODE=mailbox
+        export MESA_SHADER_CACHE_DIR=/tmp/mesa_shader_cache
+        export MESA_SHADER_CACHE_MAX_SIZE=512M
+        mkdir -p /tmp/mesa_shader_cache 2>/dev/null || true
     else
         log_info "Using Mesa multi-threaded software rendering"
         export NATIVOS_GPU=software
@@ -227,6 +251,11 @@ stage_desktop() {
         export GALLIUM_DRIVER=llvmpipe
         export MESA_LOADER_DRIVER_OVERRIDE=swrast
         export LP_NUM_THREADS=${'$'}(nproc 2>/dev/null || echo 4)
+    fi
+
+    if [ "${'$'}{MESA_GLTHREAD_PREF:-true}" = "true" ]; then
+        export mesa_glthread=true
+        export GALLIUM_THREAD=1
     fi
 
     export WLR_BACKENDS=x11
@@ -381,6 +410,11 @@ WRAPPER_EOF2
 
         if [ "${'$'}DURATION" -lt 3 ]; then
             FAIL_COUNT=${'$'}((FAIL_COUNT + 1))
+            # Auto-fallback watchdog: if compositor crashes under GLES2, fall back to Pixman CPU rasterizer
+            if [ "${'$'}WLR_RENDERER" = "gles2" ] && [ "${'$'}WLR_RENDERER_PREF" != "gles2" ]; then
+                log_warn "GLES2 compositor failed or crashed; falling back to CPU pixman renderer"
+                export WLR_RENDERER=pixman
+            fi
             if [ "${'$'}FAIL_COUNT" -gt 5 ]; then
                 log_err "Crash loop detected. Cooling down for 5s..."
                 sleep 5

@@ -274,4 +274,39 @@ object NativOSPreferences {
             .putFloat(TOUCH_OFFSET_Y, 0.0f)
             .apply()
     }
+
+    private const val RESOLUTION_SCALE_PERCENT = "resolution_scale_percent"
+    private const val WLR_RENDERER = "wlr_renderer"
+    private const val MESA_GLTHREAD = "mesa_glthread"
+
+    /** Virtual resolution scale: 100 (Native), 80 (Balanced -36% fillrate), 67 (Performance -55% fillrate) */
+    fun resolutionScalePercent(context: Context): Int =
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+            .getInt(RESOLUTION_SCALE_PERCENT, 100)
+
+    fun setResolutionScalePercent(context: Context, percent: Int) {
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+            .edit().putInt(RESOLUTION_SCALE_PERCENT, percent).apply()
+    }
+
+    /** Compositor renderer: "auto" (GLES2 with pixman fallback), "gles2", "pixman" */
+    fun wlrRenderer(context: Context): String =
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+            .getString(WLR_RENDERER, "auto") ?: "auto"
+
+    fun setWlrRenderer(context: Context, renderer: String) {
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+            .edit().putString(WLR_RENDERER, renderer).apply()
+    }
+
+    /** Multi-threaded OpenGL dispatch via Mesa glthread */
+    fun mesaGlThread(context: Context): Boolean =
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+            .getBoolean(MESA_GLTHREAD, true)
+
+    fun setMesaGlThread(context: Context, enabled: Boolean) {
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+            .edit().putBoolean(MESA_GLTHREAD, enabled).apply()
+    }
 }
+

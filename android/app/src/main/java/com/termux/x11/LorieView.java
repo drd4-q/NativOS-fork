@@ -355,6 +355,15 @@ public class LorieView extends SurfaceView implements InputStub {
     private final InputMethodManager mIMM = (InputMethodManager)getContext().getSystemService(Context.INPUT_METHOD_SERVICE);
     private Callback mCallback;
     private final Point p = new Point();
+
+    public int getX11Width() {
+        return p.x > 0 ? p.x : getWidth();
+    }
+
+    public int getX11Height() {
+        return p.y > 0 ? p.y : getHeight();
+    }
+
     private final Rect contentInsets = new Rect();
     private final Rect viewport = new Rect();
     private final Rect inputViewport = new Rect();
