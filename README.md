@@ -263,7 +263,9 @@ cd android
 ./gradlew :app:assembleDebug
 ```
 
-Official release signing material is private and is never committed. Contributors can build a debug APK or configure their own signing key.
+## Documentation
+
+- [Display Architecture & Qualcomm DRM / Xiaomi M17](docs/DISPLAY_ARCHITECTURE_XIAOMI_M17.md): Deep dive into the Snapdragon display pipeline, KGSL, DRM Master, and DRI3 workarounds.
 
 ## Security
 
